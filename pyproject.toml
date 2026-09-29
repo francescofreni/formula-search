@@ -1,0 +1,86 @@
+# -----------------------------------------------------------------------------
+# BUILD SYSTEM
+# -----------------------------------------------------------------------------
+
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+    "setuptools >=77.0.0",
+    "wheel >=0.40.0",
+]
+
+
+# -----------------------------------------------------------------------------
+# PROJECT AND DEPENDENCIES
+# -----------------------------------------------------------------------------
+
+[project]
+name = "formula-search"
+version = "0.1.0"
+description = "Verifier-guided search for causal identifying formulas"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Francesco Freni"},
+]
+keywords = ["causal graphical models", "identification", "verification"]
+# hiprof as developed in hiprof-eq, which is not the release on PyPI; see
+# README.md for how to install it.
+dependencies = [
+    "hiprof",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "mypy",
+    "pytest",
+    "ruff",
+]
+
+
+# -----------------------------------------------------------------------------
+# TOOL CONFIGURATION
+# -----------------------------------------------------------------------------
+
+[tool.black]
+line-length = 79
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+warn_unused_ignores = true
+warn_unused_configs = true
+warn_return_any = true
+warn_redundant_casts = true
+warn_unreachable = true
+ignore_missing_imports = true
+disallow_untyped_calls = true
+no_implicit_optional = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 79
+target-version = "py311"
+output-format = "grouped"
+
+[tool.ruff.lint]
+select = [
+    "F",
+    "E",
+    "W",
+    "B",
+    "C90",
+    "I",
+]
+ignore = ["E501"]
+preview = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
