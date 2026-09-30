@@ -1,8 +1,9 @@
-"""The ID algorithm of Shpitser and Pearl (2006), in hiprof's grammar.
+"""The ID and IDC algorithms of Shpitser and Pearl, in hiprof's grammar.
 
-Lines 1-4 of ID reduce the target to the districts ``D`` of ``G[R]``, where
-``R`` holds the ancestors of the outcomes ``Y`` once the treatments ``T`` are
-removed (Richardson et al., 2023, Theorem 48):
+Lines 1-4 of ID (Shpitser and Pearl, 2006) reduce the target to the
+districts ``D`` of ``G[R]``, where ``R`` holds the ancestors of the outcomes
+``Y`` once the treatments ``T`` are removed (Richardson et al., 2023,
+Theorem 48):
 
     p(y | do(t)) = sum_{R \\ Y} prod_D Q[D].
 
@@ -21,12 +22,18 @@ formula of type ``Y | T``:
 
 Averaging leaves a kernel unchanged under the model, as it does not depend
 on these inputs.
+
+IDC (Shpitser and Pearl, 2008, Figure 7) identifies a conditional target
+``p(y | do(t), w)``: Rule 2 turns conditions into interventions while it
+applies, and ID identifies the joint kernel of the outcomes and the remaining
+conditions, which is then conditioned on these conditions.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
+from ..docalculus import rule2
 from ..expression import (
     Expression,
     Term,
@@ -47,47 +54,99 @@ def identify(
     graph: str,
     treatments: str | Iterable[str],
     outcomes: str | Iterable[str],
+    conditions: str | Iterable[str] = (),
 ) -> str | None:
-    """Identify ``p(outcomes | do(treatments))`` with the ID algorithm.
+    """Identify ``p(outcomes | do(treatments), conditions)``.
+
+    The target is identified with ID, or with IDC if there are conditions.
 
     :param graph: Acyclic directed mixed graph in hiprof's syntax, such as
         ``"T -> M; M -> Y; T <-> Y"``.
     :param treatments: Treatment variable, or variables.
     :param outcomes: Outcome variable, or variables.
+    :param conditions: Conditioning variable, or variables.
     :returns: An identifying formula in hiprof's grammar, or ``None`` if the
-        target is not identifiable. Its inputs are treatments, but it may
-        omit treatments that the target does not depend on; declare these as
-        ``redundant_inputs`` when checking the formula with hiprof.
-    :raises ValueError: If the graph is invalid, or the treatments and
-        outcomes are empty, overlap, or are not nodes of the graph.
+        target is not identifiable. Its inputs are treatments and conditions,
+        but it may omit those that the target does not depend on.
+    :raises ValueError: If the graph is invalid, the outcomes are empty, or
+        the variables overlap or are not nodes of the graph.
     """
     admg = ADMG.parse(graph)
-    t = _variables(treatments, "Treatments", admg)
-    y = _variables(outcomes, "Outcomes", admg)
-    if t & y:
-        raise ValueError("Treatments and outcomes must be disjoint.")
-    order = admg.topological_order()
+    x, y, w = parse_query(admg, treatments, outcomes, conditions)
+    formula = idc(admg, y, x, w)
+    return None if formula is None else render(formula, reserved=x | w)
 
-    admg = admg.subgraph(admg.ancestors(y))  # line 2
-    x = t & admg.nodes
-    if not x:  # line 1
-        return render(Term(y))
 
-    r = admg.subgraph(admg.nodes - x).ancestors(y)  # line 3
-    districts = sorted(  # line 4
-        admg.subgraph(r).districts(),
-        key=lambda district: min(map(order.index, district)),
-    )
-    try:
-        kernels = [
-            _kernel(district, Term(admg.nodes), admg, order)
-            for district in districts
-        ]
+def parse_query(
+    graph: ADMG,
+    treatments: str | Iterable[str],
+    outcomes: str | Iterable[str],
+    conditions: str | Iterable[str] = (),
+) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """Return the treatments, outcomes, and conditions of a query as sets.
+
+    :raises ValueError: If the outcomes are empty, or the variables overlap
+        or are not nodes of the graph.
+    """
+    x, y, w = map(_as_set, (treatments, outcomes, conditions))
+    if not y:
+        raise ValueError("Outcomes must not be empty.")
+    if unknown := (x | y | w) - graph.nodes:
+        raise ValueError(
+            "Variables must be nodes of the graph; "
+            f"not nodes: {', '.join(sorted(unknown))}."
+        )
+    if len(x) + len(y) + len(w) > len(x | y | w):
+        raise ValueError(
+            "Treatments, outcomes, and conditions must be disjoint."
+        )
+    return x, y, w
+
+
+def idc(
+    graph: ADMG,
+    y: frozenset[str],
+    x: frozenset[str],
+    w: frozenset[str] = frozenset(),
+) -> Expression | None:
+    """Identify ``p(y | do(x), w)`` with IDC, as an expression.
+
+    :returns: The identifying formula, or ``None`` if the target is not
+        identifiable.
+    """
+    for z in sorted(w):  # line 1
+        if rule2(graph, y, x, {z}, w - {z}):
+            return idc(graph, y, x | {z}, w - {z})
+
+    try:  # line 2
+        joint = _id(graph, y | w, x)
     except _Hedge:
         return None
+    return condition(joint, w)
 
-    factors = _factors(kernels, x, order)
-    return render(marginal(product(factors), r - y), reserved=t)
+
+def _id(graph: ADMG, y: frozenset[str], x: frozenset[str]) -> Expression:
+    """Identify ``p(y | do(x))`` with ID.
+
+    :raises _Hedge: If the target is not identifiable.
+    """
+    order = graph.topological_order()
+
+    graph = graph.subgraph(graph.ancestors(y))  # line 2
+    x &= graph.nodes
+    if not x:  # line 1
+        return Term(y)
+
+    r = graph.subgraph(graph.nodes - x).ancestors(y)  # line 3
+    districts = sorted(  # line 4
+        graph.subgraph(r).districts(),
+        key=lambda district: min(map(order.index, district)),
+    )
+    kernels = [
+        _kernel(district, Term(graph.nodes), graph, order)
+        for district in districts
+    ]
+    return marginal(product(_factors(kernels, x, order)), r - y)
 
 
 def _kernel(
@@ -187,17 +246,5 @@ def _conditional(
     )
 
 
-def _variables(
-    variables: str | Iterable[str],
-    name: str,
-    graph: ADMG,
-) -> frozenset[str]:
-    names = frozenset([variables] if isinstance(variables, str) else variables)
-    if not names:
-        raise ValueError(f"{name} must not be empty.")
-    if unknown := names - graph.nodes:
-        raise ValueError(
-            f"{name} must be nodes of the graph; "
-            f"not nodes: {', '.join(sorted(unknown))}."
-        )
-    return names
+def _as_set(variables: str | Iterable[str]) -> frozenset[str]:
+    return frozenset([variables] if isinstance(variables, str) else variables)

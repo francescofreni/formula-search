@@ -60,19 +60,45 @@ class ADMG:
             ),
         )
 
+    def mutilated(
+        self,
+        into: Iterable[str] = (),
+        out_of: Iterable[str] = (),
+    ) -> ADMG:
+        """Return the graph without the edges into ``into`` or out of ``out_of``.
+
+        Edges into a node have an arrowhead at it, so these include the
+        bidirected edges at ``into``.
+        """
+        into, out_of = frozenset(into), frozenset(out_of)
+        return ADMG(
+            nodes=self.nodes,
+            directed=frozenset(
+                (parent, child)
+                for parent, child in self.directed
+                if child not in into and parent not in out_of
+            ),
+            bidirected=frozenset(
+                edge for edge in self.bidirected if not edge & into
+            ),
+        )
+
+    def parents(self, nodes: Iterable[str]) -> frozenset[str]:
+        """Return the nodes with a directed edge into ``nodes``."""
+        nodes = frozenset(nodes)
+        return frozenset(
+            parent for parent, child in self.directed if child in nodes
+        )
+
     def ancestors(self, nodes: Iterable[str]) -> frozenset[str]:
         """Return the nodes with a directed path into ``nodes``.
 
         Every node is its own ancestor.
         """
         ancestors = frozenset(nodes)
-        while True:
-            parents = {
-                parent for parent, child in self.directed if child in ancestors
-            }
-            if parents <= ancestors:
-                return ancestors
+        while parents := self.parents(ancestors) - ancestors:
             ancestors |= parents
+        return ancestors
 
     def district(self, node: str) -> frozenset[str]:
         """Return the nodes joined to ``node`` by bidirected paths."""
@@ -87,6 +113,39 @@ class ADMG:
     def districts(self) -> frozenset[frozenset[str]]:
         """Return the maximal sets of nodes joined by bidirected paths."""
         return frozenset(self.district(node) for node in self.nodes)
+
+    def d_separated(
+        self,
+        first: Iterable[str],
+        second: Iterable[str],
+        given: Iterable[str] = (),
+    ) -> bool:
+        """Return whether ``given`` d-separates ``first`` from ``second``.
+
+        In an ADMG, this is m-separation, that is, d-separation once every
+        bidirected edge is replaced by a latent common parent. It holds if
+        no path joins the sets outside ``given`` in the augmented graph of
+        their ancestors, where each district and its parents form a clique
+        (Richardson, 2003, Theorem 1).
+
+        :raises ValueError: If the sets overlap.
+        """
+        first, second, given = map(frozenset, (first, second, given))
+        if first & second or given & (first | second):
+            raise ValueError("The sets must be disjoint.")
+        ancestral = self.subgraph(self.ancestors(first | second | given))
+        neighbours: dict[str, set[str]] = {n: set() for n in ancestral.nodes}
+        for district in ancestral.districts():
+            clique = district | ancestral.parents(district)
+            for node in clique:
+                neighbours[node] |= clique
+
+        reached, pending = set(first), list(first)
+        while pending:
+            for node in neighbours[pending.pop()] - given - reached:
+                reached.add(node)
+                pending.append(node)
+        return not reached & second
 
     def topological_order(self) -> tuple[str, ...]:
         """Return a topological order that places ties alphabetically."""

@@ -28,6 +28,18 @@ def test_subgraph_keeps_the_edges_between_its_nodes() -> None:
     assert graph.bidirected == {frozenset({"W", "X"}), frozenset({"W", "Y"})}
 
 
+def test_mutilated_removes_the_edges_into_and_out_of_nodes() -> None:
+    graph = ADMG.parse(NAPKIN).mutilated(into={"X"}, out_of={"Z"})
+
+    assert graph.nodes == {"W", "X", "Y", "Z"}
+    assert graph.directed == {("W", "Z"), ("X", "Y")}
+    assert graph.bidirected == {frozenset({"W", "Y"})}
+
+
+def test_parents_of_a_set_of_nodes() -> None:
+    assert ADMG.parse(NAPKIN).parents({"X", "Y"}) == {"X", "Z"}
+
+
 def test_ancestors_follow_directed_edges_only() -> None:
     graph = ADMG.parse(NAPKIN)
 
@@ -40,6 +52,45 @@ def test_districts_follow_bidirected_edges() -> None:
         frozenset({"W", "X", "Y"}),
         frozenset({"Z"}),
     }
+
+
+@pytest.mark.parametrize(
+    ("graph", "first", "second", "given", "separated"),
+    [
+        pytest.param("A -> B; B -> C", "A", "C", "", False, id="chain"),
+        pytest.param(
+            "A -> B; B -> C", "A", "C", "B", True, id="blocked chain"
+        ),
+        pytest.param("A -> B; C -> B", "A", "C", "", True, id="collider"),
+        pytest.param(
+            "A -> B; C -> B", "A", "C", "B", False, id="open collider"
+        ),
+        pytest.param(
+            "A -> B; C -> B; B -> D", "A", "C", "D", False, id="descendant"
+        ),
+        pytest.param("A <-> B; B <-> C", "A", "C", "", True, id="bidirected"),
+        pytest.param("A <-> B; B <-> C", "A", "C", "B", False, id="open"),
+        # Z -> X <-> W <-> Y is open given its colliders X and W.
+        pytest.param(NAPKIN, "Z", "Y", "W X", False, id="napkin"),
+    ],
+)
+def test_d_separated_follows_colliders_and_bidirected_edges(
+    graph: str,
+    first: str,
+    second: str,
+    given: str,
+    separated: bool,
+) -> None:
+    admg = ADMG.parse(graph)
+
+    assert admg.d_separated(first.split(), second.split(), given.split()) is (
+        separated
+    )
+
+
+def test_d_separated_rejects_overlapping_sets() -> None:
+    with pytest.raises(ValueError, match="disjoint"):
+        ADMG.parse("A -> B").d_separated({"A"}, {"B"}, {"A"})
 
 
 def test_topological_order_places_ties_alphabetically() -> None:

@@ -4,13 +4,14 @@ Every expression denotes a kernel, a conditional density over its
 ``outputs`` given its ``inputs`` (Freni et al., 2026). The
 constructors :func:`product`, :func:`marginal`, :func:`condition`, and
 :func:`average` build admissible expressions and simplify them with
-identities that hold for every positive observational law, and
-:func:`render` writes an expression in hiprof's syntax.
+identities that hold for every positive observational law.
+:func:`render` writes an expression in hiprof's syntax, and
+:func:`render_query` writes a query ``p(y | do(x), w)``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Set
 from dataclasses import dataclass
 from itertools import chain, combinations, count
 from typing import TypeAlias
@@ -208,10 +209,10 @@ def _render(
     used: frozenset[str],
 ) -> str:
     if isinstance(expression, Term):
-        outputs = _names(expression.outputs, names)
+        outputs = _join(expression.outputs, names)
         if not expression.inputs:
             return f"p({outputs})"
-        return f"p({outputs} | {_names(expression.inputs, names)})"
+        return f"p({outputs} | {_join(expression.inputs, names)})"
 
     if isinstance(expression, Product):
         return " ".join(
@@ -223,18 +224,32 @@ def _render(
         for variable in sorted(expression.variables):
             names[variable] = _unused_copy(variable, used)
             used |= {names[variable]}
-        variables = _names(expression.variables, names)
+        variables = _join(expression.variables, names)
         body = _render(expression.body, names, used)
         return f"sum_{{{variables}}} {{ {body} }}"
 
-    given = _names(expression.given, names)
-    inputs = _names(expression.body.inputs, names)
+    given = _join(expression.given, names)
+    inputs = _join(expression.body.inputs, names)
     bar = f"{given} | {inputs}" if inputs else f"{given} |"
     body = _render(expression.body, names, used)
     return f"icd_{{{bar}}} {{ {body} }}"
 
 
-def _names(variables: Iterable[str], names: dict[str, str]) -> str:
+def render_query(
+    outcomes: Set[str],
+    treatments: Set[str] = frozenset(),
+    conditions: Set[str] = frozenset(),
+) -> str:
+    """Write the query ``p(outcomes | do(treatments), conditions)``."""
+    given = sorted(conditions)
+    if treatments:
+        given.insert(0, f"do({_join(treatments, {})})")
+    if not given:
+        return f"p({_join(outcomes, {})})"
+    return f"p({_join(outcomes, {})} | {', '.join(given)})"
+
+
+def _join(variables: Iterable[str], names: dict[str, str]) -> str:
     return ", ".join(
         sorted(names.get(variable, variable) for variable in variables)
     )

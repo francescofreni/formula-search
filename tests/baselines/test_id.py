@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import random
-from collections.abc import Iterable
-from itertools import combinations
 
 import pytest
-from hiprof import HPFalsifier
-from hiprof.formula import parse_and_validate
 
 from formula_search.baselines import identify
+from formula_search.docalculus import rule2
 from formula_search.graph import ADMG
+
+from .helpers import assert_identifying, random_graph
 
 IDENTIFIABLE = [
     pytest.param("T -> Y", "T", "Y", "p(Y | T)", id="direct effect"),
@@ -86,11 +85,49 @@ IDENTIFIABLE = [
     ),
 ]
 
+CONDITIONAL = [
+    # Rule 2 turns the condition into an intervention, as in Figure 6(a) of
+    # Shpitser and Pearl (2008), where p(Y | do(X)) is not identifiable.
+    pytest.param(
+        "X -> Z; Z -> Y; X <-> Z",
+        "X",
+        "Y",
+        "Z",
+        "p(Y | X, Z)",
+        id="confounded mediator",
+    ),
+    pytest.param(
+        "T -> M; M -> Y; T <-> Y",
+        "T",
+        "Y",
+        "M",
+        "sum_{T'} { p(T') p(Y | M, T') }",
+        id="front-door mediator",
+    ),
+    pytest.param(
+        "T -> M; M -> Y; T <-> Y; Y -> C",
+        "T",
+        "Y",
+        "C",
+        "icd_{C | T} { sum_{M} { p(M | T) sum_{T'} { p(T') p(Y | M, T') } "
+        "p(C | M, T, Y) } }",
+        id="child of the outcome",
+    ),
+    pytest.param("A -> B; A <-> B", (), "B", "A", "p(B | A)", id="no action"),
+]
+
 NOT_IDENTIFIABLE = [
-    pytest.param("T -> Y; T <-> Y", id="bow arc"),
-    pytest.param("T -> M; M -> Y; T <-> M", id="confounded mediator"),
-    pytest.param("T -> M; M -> Y; T <-> Y; M <-> Y", id="confounded outcome"),
-    pytest.param("Z -> T; Z -> Y; T -> Y; T <-> Z; Z <-> Y", id="confounder"),
+    pytest.param("T -> Y; T <-> Y", (), id="bow arc"),
+    pytest.param("T -> M; M -> Y; T <-> M", (), id="confounded mediator"),
+    pytest.param(
+        "T -> M; M -> Y; T <-> Y; M <-> Y", (), id="confounded outcome"
+    ),
+    pytest.param(
+        "Z -> T; Z -> Y; T -> Y; T <-> Z; Z <-> Y", (), id="confounder"
+    ),
+    # Conditioning on a collider, as in Figure 6(b) of Shpitser and Pearl
+    # (2008), where p(Y | do(T)) = p(Y | T).
+    pytest.param("T -> Y; T -> Z; Y -> Z; T <-> Z", "Z", id="collider"),
 ]
 
 
@@ -106,76 +143,90 @@ def test_identify_returns_identifying_formulas(
     formula = identify(graph, treatments, outcomes)
 
     assert formula == expected
-    assert_identifying(graph, _set(treatments), _set(outcomes), formula)
+    assert_identifying(graph, treatments, outcomes, (), formula)
 
 
-@pytest.mark.parametrize("graph", NOT_IDENTIFIABLE)
+@pytest.mark.parametrize(
+    ("graph", "treatments", "outcomes", "conditions", "expected"),
+    CONDITIONAL,
+)
+def test_identify_returns_formulas_for_conditional_targets(
+    graph: str,
+    treatments: str | tuple[str, ...],
+    outcomes: str,
+    conditions: str,
+    expected: str,
+) -> None:
+    formula = identify(graph, treatments, outcomes, conditions)
+
+    assert formula == expected
+    assert_identifying(graph, treatments, outcomes, conditions, formula)
+
+
+@pytest.mark.parametrize(("graph", "conditions"), NOT_IDENTIFIABLE)
 def test_identify_returns_none_for_non_identifiable_targets(
     graph: str,
+    conditions: str | tuple[str, ...],
 ) -> None:
-    assert identify(graph, "T", "Y") is None
+    assert identify(graph, "T", "Y", conditions) is None
 
 
 def test_identify_agrees_with_fixing_on_random_graphs() -> None:
     rng = random.Random(0)
 
     for _ in range(300):
-        graph, treatments, outcomes = random_query(rng)
-        formula = identify(graph, treatments, outcomes)
+        graph, nodes = random_graph(rng)
+        nodes = rng.sample(nodes, len(nodes))
+        split = rng.randint(1, min(2, len(nodes)))
+        y, others = frozenset(nodes[:split]), nodes[split:]
+        x = frozenset(node for node in others if rng.random() < 0.3)
+        w = frozenset(n for n in others if n not in x and rng.random() < 0.3)
+        formula = identify(graph, x, y, w)
 
-        admg = ADMG.parse(graph)
-        assert (formula is not None) == identifiable(
-            admg, treatments, outcomes
-        )
+        expected = identifiable(ADMG.parse(graph), x, y, w)
+        assert (formula is not None) == expected, (graph, x, y, w)
         if formula is not None:
-            assert_identifying(graph, treatments, outcomes, formula)
+            assert_identifying(graph, x, y, w, formula)
 
 
 @pytest.mark.parametrize(
-    ("treatments", "outcomes", "message"),
+    ("outcomes", "conditions", "message"),
     [
-        ((), "Y", "must not be empty"),
-        ("T", "Z", "not nodes: Z"),
-        ("T", "T", "must be disjoint"),
+        ((), (), "must not be empty"),
+        ("Z", (), "not nodes: Z"),
+        ("T", (), "must be disjoint"),
+        ("Y", "Y", "must be disjoint"),
     ],
 )
 def test_identify_rejects_invalid_queries(
-    treatments: str | tuple[str, ...],
-    outcomes: str,
+    outcomes: str | tuple[str, ...],
+    conditions: str | tuple[str, ...],
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        identify("T -> Y", treatments, outcomes)
-
-
-def assert_identifying(
-    graph: str,
-    treatments: frozenset[str],
-    outcomes: frozenset[str],
-    formula: str,
-) -> None:
-    """Check the type of the formula and accept it with hiprof."""
-    signature = parse_and_validate(formula).signature
-    inputs = {str(variable) for variable in signature.inputs}
-    assert {str(variable) for variable in signature.outputs} == outcomes
-    assert inputs <= treatments
-
-    target = f"p({_names(outcomes)} | do({_names(treatments)}))"
-    result = HPFalsifier(graph).check(
-        target,
-        formula,
-        redundant_inputs=sorted(treatments - inputs) or None,
-    )
-    assert result.accepted
+        identify("T -> Y", "T", outcomes, conditions)
 
 
 def identifiable(
     graph: ADMG,
     treatments: frozenset[str],
     outcomes: frozenset[str],
+    conditions: frozenset[str],
 ) -> bool:
-    """Decide identifiability by fixing (Richardson et al., 2023, Thm. 48)."""
-    r = graph.subgraph(graph.nodes - treatments).ancestors(outcomes)
+    """Decide identifiability with the fixing criterion.
+
+    Rule 2 first turns every condition that it can into an intervention
+    (Shpitser and Pearl, 2008, Theorems 20 and 21), and the joint target of
+    the outcomes and the other conditions is then identifiable if its
+    districts are reachable (Richardson et al., 2023, Theorem 48).
+    """
+    movable = {
+        z
+        for z in conditions
+        if rule2(graph, outcomes, treatments, {z}, conditions - {z})
+    }
+    x, y = treatments | movable, outcomes | (conditions - movable)
+    r = graph.subgraph(graph.nodes - x).ancestors(y)
     return all(
         reachable(graph, district)
         for district in graph.subgraph(r).districts()
@@ -198,32 +249,7 @@ def reachable(graph: ADMG, target: frozenset[str]) -> bool:
     return True
 
 
-def random_query(
-    rng: random.Random,
-) -> tuple[str, frozenset[str], frozenset[str]]:
-    nodes = rng.sample("ABCDEFG", rng.randint(2, 7))
-    statements = list(nodes)
-    for first, second in combinations(nodes, 2):
-        if rng.random() < 0.4:
-            statements.append(f"{first} -> {second}")
-        if rng.random() < 0.25:
-            statements.append(f"{first} <-> {second}")
-
-    treatments = rng.sample(nodes, rng.randint(1, min(2, len(nodes) - 1)))
-    others = [node for node in nodes if node not in treatments]
-    outcomes = rng.sample(others, rng.randint(1, min(2, len(others))))
-    return "; ".join(statements), frozenset(treatments), frozenset(outcomes)
-
-
 def _descendants(graph: ADMG, node: str) -> frozenset[str]:
     return frozenset(
         other for other in graph.nodes if node in graph.ancestors({other})
     )
-
-
-def _set(variables: str | Iterable[str]) -> frozenset[str]:
-    return frozenset([variables] if isinstance(variables, str) else variables)
-
-
-def _names(variables: Iterable[str]) -> str:
-    return ", ".join(sorted(variables))

@@ -12,6 +12,7 @@ from formula_search.expression import (
     marginal,
     product,
     render,
+    render_query,
 )
 
 
@@ -107,6 +108,12 @@ def test_render_writes_internal_conditional_divisions() -> None:
     assert render(NAPKIN) == (
         "icd_{X | Z} { sum_{W} { p(W) p(X, Y | W, Z) } }"
     )
+
+
+def test_render_query_writes_interventions_before_conditions() -> None:
+    assert render_query({"Y"}) == "p(Y)"
+    assert render_query({"B", "A"}, conditions={"C"}) == "p(A, B | C)"
+    assert render_query({"Y"}, {"W", "X"}, {"Z"}) == "p(Y | do(W, X), Z)"
 
 
 def test_rendered_expressions_are_admissible_with_the_same_type() -> None:

@@ -49,16 +49,37 @@ identify("T -> Y; T <-> Y", treatments="T", outcomes="Y")
 
 ID can return expressions outside the grammar (Freni et al., 2026,
 Example 7). `identify` rebuilds them as in the proof of their Proposition 1,
-so that every formula it returns is admissible.
+so that every formula it returns is admissible. With `conditions`, it runs
+the IDC algorithm of Shpitser and Pearl (2008) instead:
+
+```python
+identify(graph, treatments="T", outcomes="Y", conditions="M")
+# sum_{T'} { p(T') p(Y | M, T') }
+```
+
+`identify_equivalent` implements the method of Yvernes et al. (2026): it
+applies IDC to every query that do-calculus proves equal to the target, and
+returns the resulting formulas for the target, keyed by the query:
+
+```python
+from formula_search.baselines import identify_equivalent
+
+identify_equivalent("W -> Z; Z -> X; X -> Y; W <-> Y", ["W", "Z"], "Y")
+# {'p(Y | do(W, Z))': "sum_{X} { p(X | W, Z) sum_{W'} { p(W') p(Y | W', X, Z) } }",
+#  'p(Y | do(Z))': "sum_{X} { p(X | Z) sum_{W'} { p(W') p(Y | W', X, Z) } }",
+#  'p(Y | do(W), Z)': "sum_{X} { p(X | W, Z) sum_{W'} { p(W') p(Y | W', X, Z) } }"}
+```
 
 ## 🗂️ Layout
 
 ```
 src/formula_search/
-├── graph.py        acyclic directed mixed graphs
-├── expression.py   kernel expressions in hiprof's grammar
+├── graph.py                     acyclic directed mixed graphs
+├── docalculus.py                rules 2 and 3 of do-calculus
+├── expression.py                kernel expressions in hiprof's grammar
 └── baselines/
-    └── id.py       the ID algorithm
+    ├── id.py                    the ID and IDC algorithms
+    └── equivalent_queries.py    ID applied to equivalent queries
 tests/
 ```
 
