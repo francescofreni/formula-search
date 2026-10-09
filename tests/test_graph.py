@@ -97,3 +97,42 @@ def test_topological_order_places_ties_alphabetically() -> None:
     graph = ADMG.parse("D -> A; C -> A; B")
 
     assert graph.topological_order() == ("B", "C", "D", "A")
+
+
+def test_str_writes_the_graph_in_hiprofs_syntax() -> None:
+    graph = ADMG.parse("T -> M; M -> Y; T <-> Y; C")
+
+    assert str(graph) == "C; M -> Y; T -> M; T <-> Y"
+    assert ADMG.parse(str(graph)) == graph
+
+
+def test_complete_joins_every_pair_along_the_topological_order() -> None:
+    graph = ADMG.parse("T -> M; M -> Y; T <-> Y").complete()
+
+    assert graph.directed == {("T", "M"), ("T", "Y"), ("M", "Y")}
+    assert not graph.bidirected
+
+
+def test_closure_fixes_every_other_node_that_it_can() -> None:
+    graph = ADMG.parse(NAPKIN)
+
+    assert graph.closure({"Y"}) == {"Y"}
+    # Neither W nor X is fixable while Y is not fixed.
+    assert graph.closure({"Y", "Z"}) == {"W", "X", "Y", "Z"}
+
+
+@pytest.mark.parametrize(
+    ("graph", "constrained"),
+    [
+        pytest.param("T -> M; M -> Y; T <-> Y", False, id="front-door"),
+        pytest.param("A -> B; B -> C", True, id="chain"),
+        pytest.param(NAPKIN, True, id="napkin"),
+        # A and Y are not adjacent, yet A is a parent of the closure of Y.
+        pytest.param("A -> M; M -> Y; M <-> Y", False, id="instrument"),
+    ],
+)
+def test_implies_constraints_unless_every_pair_is_adjacent_once_projected(
+    graph: str,
+    constrained: bool,
+) -> None:
+    assert ADMG.parse(graph).implies_constraints() is constrained

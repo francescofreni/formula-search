@@ -6,8 +6,8 @@ import pytest
 from hiprof import HPFalsifier
 
 from formula_search.baselines import identify_equivalent
-from formula_search.baselines.equivalent_queries import equivalent_queries
 from formula_search.baselines.id import parse_query
+from formula_search.docalculus import Query, equivalent_queries
 from formula_search.expression import render_query
 from formula_search.graph import ADMG
 
@@ -145,7 +145,7 @@ def test_equivalent_queries_equal_the_target_on_random_graphs() -> None:
         target = render_query(y, x, w)
 
         falsifier = HPFalsifier(graph)
-        for do, given in equivalent_queries(ADMG.parse(graph), y, x, w):
-            assert falsifier.check(target, render_query(y, do, given)).accepted
+        for query in equivalent_queries(ADMG.parse(graph), Query(y, x, w)):
+            assert falsifier.check(target, str(query)).accepted
         for formula in identify_equivalent(graph, x, y, w).values():
             assert_identifying(graph, x, y, w, formula)

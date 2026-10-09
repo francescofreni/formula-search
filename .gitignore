@@ -19,6 +19,11 @@ venv/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+.ipynb_checkpoints/
+
+# Slides: everything latexmk builds from the source
+progress-slides.*
+!progress-slides.tex
 
 # Local/editor files
 .idea/
