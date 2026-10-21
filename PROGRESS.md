@@ -459,3 +459,17 @@ it, then using the A3 numbers below to decide 1.
    (guided derivation search) reuses `rules` and `_Search` from this
    module, ranking the edges of each query instead of expanding them
    breadth-first.
+
+## Minimal agentic controller
+
+`agentic.Session` now wraps fresh A* searches with a model-independent
+prompt/JSON-action/feedback loop. A caller-provided text callback chooses
+bound, class limit, and built-in guidance, or stops. One archive persists
+across rounds and replays each submitted derivation; feedback distinguishes
+new and duplicate classes. Tests use scripted responses, requiring no API.
+See `src/formula_search/agentic/README.md` for a runnable example.
+
+This is experiment-level guidance only. It does not add inference rules,
+resume frontiers, persist to disk, or impose expansion/time budgets. Search
+cost/output caps and a controller-round cap are explicit; class-limited
+results are not reported as exhaustive.
