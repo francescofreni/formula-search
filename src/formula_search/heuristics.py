@@ -32,7 +32,8 @@ Tiebreaker = Callable[["SearchState"], float]
 class SearchState:
     """Read-only input to a tie-breaker.
 
-    ``cost`` is committed probability-rule cost, and ``pending`` lists all
+    ``query`` heads the local inference being scored, not necessarily the
+    target query. ``cost`` is committed total rule cost; ``pending`` lists all
     outstanding premises. ``expression`` estimates an unfinished proof's
     size; only when ``derivation`` is present is it an actual formula.
     """
@@ -85,7 +86,11 @@ def max_of(*heuristics: Heuristic) -> Heuristic:
 def free_proof_bound(
     graph: str | ADMG, *, costs: Mapping[str, int] | None = None
 ) -> Heuristic:
-    """Return zero for free proofs, otherwise the cheapest rule cost."""
+    """Relax transports to zero; otherwise charge the cheapest probability step.
+
+    An observational equivalent gives zero even if transport has positive
+    configured cost. This relaxation is deliberately conservative.
+    """
     return lookahead_bound(graph, depth=0, costs=costs)
 
 
@@ -97,7 +102,8 @@ def lookahead_bound(
 ) -> Heuristic:
     """Build an admissible bound by looking ahead probability-rule steps.
 
-    At depth zero, queries with no free proof need at least the cheapest
+    Transport costs are relaxed to zero, even when configured positive.
+    At depth zero, queries with no observational equivalent need the cheapest
     rule. Each further level minimizes rule cost plus bounds for all its
     premises, across every do-calculus-equivalent query. A dead end gets a
     finite lower bound rather than infinity. Results are cached by query
@@ -107,7 +113,9 @@ def lookahead_bound(
         raise ValueError("Depth must be a nonnegative integer")
     admg = ADMG.parse(graph) if isinstance(graph, str) else graph
     rule_costs = _rule_costs(costs)
-    cheapest = min(rule_costs.values())
+    cheapest = min(
+        value for rule, value in rule_costs.items() if rule != "transport"
+    )
 
     @cache
     def component(query: Query) -> tuple[Query, ...]:

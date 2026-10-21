@@ -26,8 +26,7 @@ from formula_search.suite import CURATED
 
 
 def proof_cost(d: Derivation, costs: Mapping[str, int]) -> int:
-    own = 0 if d.rule in ("base", "do-calculus") else costs.get(d.rule, 1)
-    return own + sum(proof_cost(p, costs) for p in d.premises)
+    return d.cost(costs)
 
 
 @pytest.mark.parametrize(
@@ -35,16 +34,17 @@ def proof_cost(d: Derivation, costs: Mapping[str, int]) -> int:
     [
         (Task("X -> Y", "X", "Y"), 1),
         (Task("Z -> X; X -> Y", "X", "Y"), 1),
-        (Task("Z -> X; Z -> Y; X -> Y", "X", "Y"), 2),
-        (CURATED["napkin"], 3),
-        (CURATED["front-door"], 4),
+        (Task("Z -> X; Z -> Y; X -> Y", "X", "Y"), 4),
+        (CURATED["napkin"], 6),
+        (CURATED["front-door"], 8),
     ],
 )
 def test_astar_recovers_the_bounded_formula_classes(
     task: Task, bound: int
 ) -> None:
-    expected = derive_layers(*task, bound=bound)
-    actual = derive(*task, bound=bound)
+    costs = {"transport": 1}
+    expected = derive_layers(*task, bound=bound, costs=costs)
+    actual = derive(*task, bound=bound, costs=costs)
     archive = Archive(task)
     graph = ADMG.parse(task.graph)
     for d in actual:
@@ -53,9 +53,9 @@ def test_astar_recovers_the_bounded_formula_classes(
     assert len(actual) == len(expected)
     for d in expected:
         assert archive.submit(d.formula, d).outcome == "duplicate"
-    costs = [proof_cost(d, {}) for d in actual]
-    assert costs == sorted(costs)
-    assert all(cost <= bound for cost in costs)
+    totals = [proof_cost(d, costs) for d in actual]
+    assert totals == sorted(totals)
+    assert all(cost <= bound for cost in totals)
 
 
 def test_simple_output_is_deterministic_and_can_be_limited() -> None:
@@ -68,11 +68,16 @@ def test_simple_output_is_deterministic_and_can_be_limited() -> None:
 
 def test_weighted_costs_and_multiple_premises() -> None:
     task = CURATED["napkin"]
-    costs = {"marginalization": 2, "conditioning": 3, "chain rule": 4}
-    assert derive(*task, bound=8, costs=costs) == []
-    actual = derive(*task, bound=9, costs=costs)
+    costs = {
+        "marginalization": 2,
+        "conditioning": 3,
+        "chain rule": 4,
+        "transport": 1,
+    }
+    assert derive(*task, bound=11, costs=costs) == []
+    actual = derive(*task, bound=12, costs=costs)
     assert len(actual) == 2
-    assert all(proof_cost(d, costs) == 9 for d in actual)
+    assert all(proof_cost(d, costs) == 12 for d in actual)
     assert all(d.verify(ADMG.parse(task.graph)) for d in actual)
 
 
@@ -150,13 +155,14 @@ def test_tiebreakers_compose_and_preserve_formula_classes_and_cost_order() -> (
     actual = derive(
         *task,
         bound=2,
+        costs={"transport": 1},
         tiebreaker=[
             term_count(),
             summation_count(weight=2),
             conditioning_size(),
         ],
     )
-    expected = derive(*task, bound=2)
+    expected = derive(*task, bound=2, costs={"transport": 1})
     archive = Archive(task)
     for d in actual:
         assert d.verify(ADMG.parse(task.graph))
@@ -165,7 +171,7 @@ def test_tiebreakers_compose_and_preserve_formula_classes_and_cost_order() -> (
     assert all(
         archive.submit(d.formula, d).outcome == "duplicate" for d in expected
     )
-    costs = [proof_cost(d, {}) for d in actual]
+    costs = [proof_cost(d, {"transport": 1}) for d in actual]
     assert costs == sorted(costs)
 
 
@@ -242,17 +248,32 @@ def assert_matches_layers(
         (
             Task("Z -> X; X -> Y", "X", "Y"),
             4,
-            {"marginalization": 2, "conditioning": 1, "chain rule": 3},
+            {
+                "marginalization": 2,
+                "conditioning": 1,
+                "chain rule": 3,
+                "transport": 1,
+            },
         ),
         (
             CURATED["front-door"],
-            8,
-            {"marginalization": 2, "conditioning": 3, "chain rule": 2},
+            12,
+            {
+                "marginalization": 2,
+                "conditioning": 3,
+                "chain rule": 2,
+                "transport": 1,
+            },
         ),
         (
             CURATED["napkin"],
-            9,
-            {"marginalization": 2, "conditioning": 3, "chain rule": 4},
+            12,
+            {
+                "marginalization": 2,
+                "conditioning": 3,
+                "chain rule": 4,
+                "transport": 1,
+            },
         ),
     ],
 )
@@ -295,18 +316,20 @@ def test_combined_guidance_preserves_classes_and_minimum_weighted_costs(
 
 
 @pytest.mark.parametrize(
-    ("graph", "outcomes", "bound"),
+    ("graph", "treatment", "outcomes", "bound"),
     [
-        ("Z -> X; X -> Y; Y -> W", ("Y", "W"), 1),
+        ("Z -> X; X -> Y; Y -> W", "X", ("Y", "W"), 1),
         (
             "X -> Y; X -> Z; X -> W; Y -> Z; Y -> W; Z -> W",
+            "X",
             ("Y", "Z", "W"),
-            2,
+            1,
         ),
+        ("T -> M; M -> Y; T <-> Y", "T", ("M", "Y"), 7),
     ],
 )
 def test_multi_outcome_targets_and_nested_partial_expressions(
-    graph: str, outcomes: tuple[str, ...], bound: int
+    graph: str, treatment: str, outcomes: tuple[str, ...], bound: int
 ) -> None:
     seen: list[SearchState] = []
     metric = expression_size()
@@ -317,22 +340,27 @@ def test_multi_outcome_targets_and_nested_partial_expressions(
 
     actual = derive(
         graph,
-        "X",
+        treatment,
         outcomes,
         bound=bound,
+        costs={"transport": 1},
         heuristic=lookahead_bound(graph, depth=1),
         tiebreaker=tiebreaker,
     )
-    assert_matches_layers(graph, "X", outcomes, bound, {}, actual)
+    assert_matches_layers(
+        graph, treatment, outcomes, bound, {"transport": 1}, actual
+    )
     target_outputs = frozenset(outcomes)
     assert all(d.expression.outputs == target_outputs for d in actual)
-    assert all(state.expression.outputs == target_outputs for state in seen)
+    assert all(
+        state.expression.outputs == state.query.outcomes for state in seen
+    )
     assert all(state.expression.inputs <= state.query.inputs for state in seen)
     assert any(state.pending for state in seen)
-    if len(outcomes) == 3:
-        # Exercise two nested chain-rule splits rather than merely passing
-        # several outcomes to a search that immediately stops at a base.
-        assert any(len(state.pending) == 3 for state in seen)
+    if outcomes == ("M", "Y"):
+        # The joint front-door effect requires nested nontrivial chain
+        # splits; redundant observational subproofs are class-deduplicated.
+        assert any(len(state.pending) == 2 for state in seen)
 
         def chain_steps(d: Derivation) -> int:
             return int(d.rule == "chain rule") + sum(
@@ -359,7 +387,7 @@ def test_admissible_inconsistent_heuristic_preserves_minimum_costs(
     # Establish the target's true minimum independently. The heuristic is
     # exact only at this query and zero everywhere else, hence admissible.
     assert derive_layers(*task, bound=2) == []
-    assert derive_layers(*task, bound=3)
+    assert derive_layers(*task, bound=3, limit=1)
     evaluated = []
 
     def heuristic(query: Query) -> float:
@@ -375,13 +403,25 @@ def test_admissible_inconsistent_heuristic_preserves_minimum_costs(
         *task,
         bound=3,
         heuristic=heuristic,
+        limit=3,
         tiebreaker=(
             [term_count(), summation_count()] if use_tiebreaker else None
         ),
     )
     assert target in evaluated
     assert any(query != target for query in evaluated)
-    assert_matches_layers(*task, 3, {}, actual)
+    reference = derive_layers(*task, bound=3, limit=1)
+    complete = HPFalsifier(str(graph.complete()))
+    assert len(actual) == 3
+    assert all(
+        d.cost() == reference[0].cost() == 3 and d.verify(graph)
+        for d in actual
+    )
+    assert all(
+        not complete.check(d.formula, previous.formula)
+        for i, d in enumerate(actual)
+        for previous in actual[:i]
+    )
     first = derive(
         *task,
         bound=3,

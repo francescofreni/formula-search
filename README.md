@@ -116,8 +116,9 @@ archive.submit("p(Y | T)").outcome
 ## 🌳 Derivation search
 
 `derive` searches derivations of the target with Rules 2 and 3 of
-do-calculus and the rules of probability, breadth-first in the number of
-rules of probability, and keeps one derivation per class. Each derivation can
+do-calculus and the rules of probability, in increasing total rule cost,
+and keeps one derivation per class. Transports between equivalent queries
+are explicit moves and can compose. Each derivation can
 be checked again step by step, and makes its formula derivation-certified in
 an archive:
 
@@ -126,35 +127,48 @@ from formula_search.derivation import derive
 
 napkin = Task("W -> Z; Z -> X; X -> Y; W <-> X; W <-> Y", "X", "Y")
 archive = Archive(napkin)
-for derivation in derive(*napkin, bound=3):
+for derivation in derive(*napkin, bound=3, limit=3):
     archive.submit(derivation.formula, derivation)
     print(derivation.formula)
 # sum_{Z} { p(Z) icd_{X | Z} { sum_{W} { p(W) p(X, Y | W, Z) } } }
 # sum_{Z} { p(Z | X) icd_{X | Z} { sum_{W} { p(W) p(X, Y | W, Z) } } }
+# sum_{W} { p(W | X) sum_{Z} { p(Z | W) icd_{X | Z} { sum_{W'} { p(W') p(X, Y | W', Z) } } } }
 ```
 
-Probability rules cost one by default; base terms and do-calculus are free.
-Pass, for example, `costs={"marginalization": 2, "conditioning": 3}` to
-`derive` to override individual rule costs. Costs must be positive integers;
-omitted rules still cost one. `bound` limits the total weighted cost.
+Probability rules cost one by default; base terms cost zero. Transport
+cost is configured with `costs={"transport": 0}` (the default) or a positive
+integer. Each transport wrapper costs once, regardless of the number of
+do-calculus edges in its path. Probability-rule overrides remain positive
+integers. `bound` limits the total cost; `derivation.cost(costs)` computes it.
 
-A separate A* engine explores unfinished proof trees by their committed cost
-plus a heuristic estimate for each unresolved query:
+Zero-cost composition can produce infinitely many distinct formula classes
+at a finite bound. Use `limit` for a prefix, or positive transport cost for
+finite bounded enumeration. Both engines default to `max_expansions=10000`;
+hitting it raises `SearchLimitExceeded` with `.derivations` and `.expanded`,
+never silently returning an exhaustive result. `max_expansions=None`
+disables the guard and may not terminate with free transport. A class-limit
+return is also only a prefix, not evidence that no other classes exist.
+
+```python
+# Finite bounded search: the four napkin classes reachable through cost 7.
+derivations = derive(*napkin, bound=7, costs={"transport": 1})
+```
+
+[astar.py](src/formula_search/astar.py) configures heuristic-guided inference
+using the same agenda and subproof-class deduplication as `derivation.py`:
 
 ```python
 from formula_search.astar import derive as derive_astar
 
-# Zero heuristic by default: uniform-cost search; stop at the first class.
-derivations = derive_astar(*napkin, bound=3, limit=1)
+derivations = derive_astar(*napkin, bound=3, limit=3)
 ```
 
-It accepts the same `costs` mapping and an optional `heuristic(query)`
-callback. To guarantee minimum-cost discovery, estimates must be admissible:
-nonnegative lower bounds on the cost of deriving the query, accounting for
-free do-calculus steps. The default zero estimate satisfies this requirement.
-Without `limit`, it explores the full bound. It deduplicates completed
-formulas but does not cache subproof classes; use small graphs and bounds.
-
+A query heuristic lower-bounds its cheapest proof cost (inside cost). The
+agenda uses these estimates for sibling premises to lower-bound the context
+needed to reach the target (outside cost). Admissible estimates preserve
+minimum-cost discovery even when inconsistent. Built-in bounds relax
+transport costs to zero; this remains admissible when transport costs more.
+Only actual costs prune the bound. Small graphs and bounds are recommended.
 
 Heuristics and tie-breakers can be mixed independently:
 
@@ -172,6 +186,7 @@ costs = {"marginalization": 2}
 derivations = derive_astar(
     *napkin,
     bound=4,
+    limit=3,
     costs=costs,
     heuristic=max_of(
         free_proof_bound(napkin.graph, costs=costs),
@@ -194,7 +209,8 @@ all tie-breakers. `expression_size()` counts all expression nodes, and
 `conditioning_count()` counts ICD operations.
 
 A custom tie-breaker is a callable receiving a read-only `SearchState` with
-`query`, committed `cost`, `pending` queries, an `expression`, and an optional
+the local inference's `query`, committed `cost`, `pending` queries, an
+`expression`, and an optional
 completed `derivation`. Unfinished expressions use kernel placeholders and
 provisional transport weights; they estimate size and are not formulas.
 Completed candidates use their actual simplified expressions. Tie-breaking
@@ -210,7 +226,7 @@ src/formula_search/
 ├── evaluator.py                 archives of distinct valid formulas
 ├── suite.py                     curated and random tasks
 ├── derivation.py                derivation search
-├── astar.py                     A* over unfinished derivations
+├── astar.py                     heuristic-guided AND/OR inference
 ├── heuristics.py                cost bounds and expression tie-breakers
 └── baselines/
     ├── id.py                    the ID and IDC algorithms

@@ -127,7 +127,7 @@ ways:
 - **Rules of probability,** listed by
   [`rules(graph, query)`](src/formula_search/derivation.py#L155). Each
   writes the query in terms of other queries, called its premises, and
-  costs 1:
+  defaults to cost 1:
 
   | Rule | Identity | Premises |
   |---|---|---|
@@ -137,7 +137,7 @@ ways:
 
   Marginalization and conditioning act on one variable at a time, since
   they compose.
-- **Do-calculus,** at no cost. Every query in the component of the current
+- **Do-calculus transport,** at configurable cost (default zero). Every query in the component of the current
   query shares its derivations. If a derivation of a member `q'` uses
   inputs that the query `q` lacks, for example `Z` in
   `p(Y | do(X)) = p(Y | do(X, Z))`, those inputs are averaged out with a
@@ -152,102 +152,99 @@ derive a query, and the chain rule needs both of its premises derived.
 
 ### The algorithm
 
-The **cost** of a derivation is the sum of its probability-rule costs.
-Each rule defaults to one; the optional `costs` mapping overrides individual
-rules with positive integers. Base terms and do-calculus steps remain free.
-`derive` asks the search for the derivations of the target at costs
-0, 1, …, `bound`. The search is
-[`_Search`](src/formula_search/derivation.py#L177), which runs two mutually
-recursive, memoized functions:
+The probability-rule costs default to one; `transport` defaults to zero.
+Both are configurable, with positive integer probability costs and
+nonnegative integer transport cost. A transport wrapper may prove a
+multi-edge do-calculus path: it is charged once per wrapper. Base terms
+are free. `Derivation.cost(costs)` sums these costs over the proof tree,
+including repeated premises even when their computation was shared.
 
-```
-layer(q, c):   derivations of q with cost c, one per class not reached by cost < c
-    compute layer(q, c') for every c' < c          # cheaper classes register first
-    for each member q' of the component of q, with its do-calculus path from q:
-        for each d in direct(q', c):
-            for each d* in transport(d, q, path):   # one per weight, if needed
-                keep d* if its formula is a new class of q
+The shared `_Search` agenda in `derivation.py` works in two stages:
 
-direct(q, c):  derivations whose last rule applies to q itself
-    c = 0:  [base(q)] if q has no do(), else []
-    c > 0:  for each rule of probability q <- (p1, ..., pk):
-                for each split c1 + ... + ck = c - cost(rule):
-                    for each choice d1 in layer(p1, c1), ..., dk in layer(pk, ck):
-                        Derivation(q, rule, (d1, ..., dk))
-```
+1. Backward reachability catalogs queries and inferences within a relaxed
+   outside-cost budget (siblings temporarily cost zero).
+2. Forward inference seeds observational terms, waits for premises,
+   combines their formula classes, and transports admitted classes to
+   equivalent queries. Transported classes are themselves eligible for
+   transport, without inserting probability steps.
 
-`direct(q, c)` only asks for layers of cost below `c`, so the recursion
-ends, and cycles among queries cost nothing extra. Components are computed
-once per query, and every `(query, cost)` pair is computed once.
+HiProF on the complete DAG deduplicates each query's subproof classes.
+Admitted classes, not just query identities, drive inference. An improved
+cost for an existing class reopens its dependent combinations; this also
+prevents inadmissible custom heuristics from losing affordable combinations.
+Certificate replay remains independent of HiProF. Exact class membership
+and completeness claims are relative to its equality checks.
 
-**Classes.** [`_new_class`](src/formula_search/derivation.py#L231) keeps a
-derivation only if HiProF, run on the complete DAG, rejects its formula as
-equal to every formula already kept for that query. This is the evaluator's
-distinctness test, applied to every subquery. No class of the target is
-lost, since substituting formulas of one class into the same rule gives
-formulas of one class.
+**Why composition matters.** The former `layer/direct` recursion transported
+only directly derived formulas and missed valid compositions. On napkin,
+one can transport the kernel `K(Y | X,Z)` to `p(Y | do(X,W))` using
+`p(Z | W)`, then to the target using `p(W | X)`. This third class has
+probability cost 3. Independent hand-built certificates and a small
+brute-force proof-tree oracle now test the agenda, rather than relying
+only on comparing two engines with the same missing move.
 
-HiProF is used only to deduplicate here, never to accept. Validity comes
-from the rules. So a wrong "same class" verdict, with probability at most
-about 1e-14 per check, could drop a class, but it could never let an
-invalid formula through.
+**Termination.** Free cycles that produce no new classes terminate through
+class deduplication. Cycles producing genuinely different weighting kernels
+need not terminate: a finite probability-cost bound can contain infinitely
+many classes. `limit` requests a prefix. `max_expansions` defaults to 10000
+and counts cataloged queries plus popped agenda items; reaching it raises
+`SearchLimitExceeded`, carrying partial `derivations` and `expanded` count.
+It never returns a silently truncated exhaustive result. None disables the
+guard. This is an expansion budget, not a hard memory or wall-time limit.
+Positive transport cost makes a finite bound enumerate finitely many
+proofs; large bounds can still exceed the budget or available memory.
 
-### A* engine
+### A* configuration
 
-[astar.py](src/formula_search/astar.py) provides a separate `derive` entry
-point with the same graph, query, bound, and probability-rule costs. It
-orders unfinished proof trees by committed cost plus the sum of
-`heuristic(query)` over all unresolved premises. The default zero heuristic
-gives uniform-cost search. `limit` optionally stops after a number of new
-formula classes. Minimum-cost discovery requires admissible estimates,
-including zero for queries with free proofs through do-calculus.
+`astar.derive` configures the shared agenda with query heuristics and
+optional tie-breakers. A query heuristic lower-bounds its cheapest proof
+(inside cost). Shortest backward paths charge rule costs plus heuristic
+bounds for sibling premises, giving an outside-context lower bound for
+subproofs. Agenda priority is committed cost plus unresolved-premise bounds
+plus outside cost. Admissible inside bounds preserve minimum-cost discovery
+without requiring consistency. Zero estimates give the uniform-cost
+relaxation of contexts. Custom overestimates can change discovery order;
+actual-cost checks alone enforce the bound.
 
-It reuses probability rules, proof trees, transport, and cost validation.
-Completed formulas are deduplicated on a complete DAG. Unlike `_Search` in
-`derivation.py`, it does not merge subproof classes or memoize solved
-subproblems, so its frontier can grow rapidly. Equivalence with the bounded
-engine is tested on small examples; this is not yet guided search at scale.
-
-[heuristics.py](src/formula_search/heuristics.py) supplies `zero`,
-`free_proof_bound`, and bounded-depth `lookahead_bound`, combined with
-`max_of`. The factories account for equivalent queries and custom costs;
-they must be configured with the search's graph and costs. An optional
-`tiebreaker` callable or list of callables scores a public `SearchState`.
-Scores are summed after the A* priority, with stable insertion order last.
-Built-in scorers count terms, summations, ICD operations, maximum input-set
-size, or all expression nodes, each with an optional nonnegative weight.
-Unfinished expressions use placeholders and provisional transport weights;
-completed formulas, including individual transport choices, are scored
-using their actual expressions. These are size tie-breakers among equal
-priorities, not admissible estimates of remaining proof cost or guarantees
-of globally minimum formula size. The default search order is unchanged.
+`heuristics.py` supplies `zero`, `free_proof_bound`, `lookahead_bound`, and
+`max_of`. Configure factories with the search's graph and costs. They relax
+transport costs to zero even when positive; this weakens but does not
+invalidate their lower bounds. A `tiebreaker` callable or iterable receives
+a `SearchState` for a local inference, not the whole target proof tree.
+Its pending premises use provisional kernel placeholders; completed
+candidates use actual simplified expressions. Scores sum after the A*
+priority, with insertion order last. They do not guarantee globally smallest
+formulas. The previous partial-root-tree traversal and discovery tie order
+have changed; cost defaults and saved Derivation representations remain
+compatible, while previously missed classes are intentionally added.
 
 ### Arguments
 
 ```python
-derive(graph, treatments, outcomes, bound, *, costs=None) -> list[Derivation]
+derive(graph, treatments, outcomes, bound, *, costs=None,
+       limit=None, max_expansions=10000) -> list[Derivation]
 ```
 
-| Argument | Type | Meaning |
-|---|---|---|
-| `graph` | `str` | ADMG in hiprof's syntax, such as `"T -> M; M -> Y; T <-> Y"` |
-| `treatments` | `str` or iterable of `str` | The intervened variables `x` of `p(y \| do(x))` |
-| `outcomes` | `str` or iterable of `str` | The outcomes `y`, not empty |
-| `bound` | `int` | The largest total probability-rule cost. Do-calculus steps and base terms are free |
+The graph and variables follow ID's parsing conventions. `bound` is total
+rule cost; `costs` accepts `marginalization`, `conditioning`, `chain rule`,
+and `transport`. The first three default to 1 and must be positive integers;
+transport defaults to 0 and must be nonnegative. `base` is always free.
+Invalid arguments raise `ValueError`.
 
-`costs` maps probability-rule names (`"marginalization"`, `"conditioning"`,
-`"chain rule"`) to positive integers; omitted rules cost one. Unknown names
-and invalid costs raise `ValueError`.
+A successful no-limit return means the agenda exhausted its bound. A class
+limit requests only a prefix. `SearchLimitExceeded` explicitly reports an
+incomplete run and exposes replayable partial results. An empty bounded
+result, even exhausted, does not establish non-identifiability. Typical
+first-formula bounds with free transport remain 2 for adjustment, 3 for
+napkin, and 4 for front-door. With transport cost 1, napkin has two classes
+through cost 6 and four through cost 7.
 
-A `Task` unpacks into the first three arguments: `derive(*task, bound=4)`.
-The function returns one derivation per class of the target found, in order
-of cost. It raises `ValueError` for an invalid graph or invalid variables,
-as `identify` does.
-
-An empty list only means that no derivation was found within the bound. It
-does not show that the target is not identifiable. Unlike `identify`,
-`derive` takes no `conditions`. The smallest bounds that find a formula are
-2 for adjustment, 3 for the napkin formula, and 4 for the front-door formula.
+Both experiment runners record `search_semantics=composed_transport_v1`
+and `status` (`exhausted`, `class_limit`, `expansion_limit`). They save and
+verify partial results when the expansion budget is reached. Existing JSON
+files without that marker used the incomplete single-transport search;
+previously reported napkin class counts are not exhaustive benchmarks for
+the corrected search.
 
 ### The output: `Derivation`
 
@@ -263,6 +260,7 @@ rules.
 | `weight` | For `do-calculus`: the conditioning set `C` of the weight `p(extra \| C)`, when the premise has inputs that `query` lacks |
 | `expression` | The derived `Expression` tree (`Term`, `Product`, `Sum`, `ICD`), computed on demand |
 | `formula` | `expression` in hiprof's syntax |
+| `cost(costs)` | Total rule cost, including configured transport costs |
 | `verify(graph)` | Replays the tree. It checks that every probability step is among `rules(graph, query)`, that every do-calculus path is a chain of `neighbours` with the side conditions tested again, that base terms have no interventions, and that every node's expression has its query's type |
 
 ### Inspecting the output
@@ -274,10 +272,11 @@ from formula_search.derivation import derive
 from formula_search.suite import CURATED
 
 task = CURATED["napkin"]
-derivations = derive(*task, bound=3)
+derivations = derive(*task, bound=3, limit=3)
 [d.formula for d in derivations]
 # ['sum_{Z} { p(Z) icd_{X | Z} { sum_{W} { p(W) p(X, Y | W, Z) } } }',
-#  'sum_{Z} { p(Z | X) icd_{X | Z} { sum_{W} { p(W) p(X, Y | W, Z) } } }']
+#  'sum_{Z} { p(Z | X) icd_{X | Z} { sum_{W} { p(W) p(X, Y | W, Z) } } }',
+#  "sum_{W} { p(W | X) sum_{Z} { p(Z | W) icd_{X | Z} { sum_{W'} { p(W') p(X, Y | W', Z) } } } }"]
 ```
 
 There is no built-in printer for the tree; this helper prints one rule per
@@ -334,6 +333,7 @@ for derivation in derivations:
     print(verdict.outcome, verdict.class_index, verdict.certified)
 # new 0 True
 # new 1 True
+# new 2 True
 sorted(archive.classes[1].broken_by)
 # ['W -> X', 'W -> Y', 'W <-> Z', 'X <-> Y', 'X <-> Z', 'Y <-> Z', 'Z -> Y']
 ```
@@ -345,16 +345,22 @@ classes, use the private `_Search` directly. Its interface may change:
 from formula_search.derivation import _Search
 from formula_search.docalculus import Query
 
+from itertools import islice
+
 search = _Search(ADMG.parse(task.graph))
-search.layer(Query(frozenset({"Y"}), frozenset({"X"})), 3)
-len(search.components)                                   # queries visited
-sorted((len(c), str(q)) for q, c in search.classes.items())[-5:]   # largest
+list(islice(search.run(task.query, 3), 3))   # explicitly request a prefix
+search.expanded
+len(search.components)                     # queries cataloged
+sorted((len(c), str(q)) for q, c in search.classes.items())[-5:]
 ```
 
 ### Measured behaviour
 
 New classes of the target at each cost, measured on 2026-10-09 on a laptop
 with several runs in parallel. The times are cumulative and indicative.
+
+The following counts describe the former single-transport search; they are
+not completeness claims for composed transport.
 
 | Task | 0 | 1 | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|---|

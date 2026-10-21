@@ -30,15 +30,17 @@ def test_derive_finds_the_front_door_formula() -> None:
     assert derivation.verify(ADMG.parse(task.graph))
 
 
-def test_derive_finds_both_napkin_formulas() -> None:
+def test_derive_finds_composed_napkin_formulas() -> None:
     task = CURATED["napkin"]
 
-    derivations = derive(*task, bound=3)
+    derivations = derive(*task, bound=3, limit=3)
 
     # The Verma constraint lets either weight average Z out.
     assert [derivation.formula for derivation in derivations] == [
         "sum_{Z} { p(Z) icd_{X | Z} { sum_{W} { p(W) p(X, Y | W, Z) } } }",
         "sum_{Z} { p(Z | X) icd_{X | Z} { sum_{W} { p(W) p(X, Y | W, Z) } } }",
+        "sum_{W} { p(W | X) sum_{Z} { p(Z | W) icd_{X | Z} { "
+        "sum_{W'} { p(W') p(X, Y | W', Z) } } } }",
     ]
     assert all(d.verify(ADMG.parse(task.graph)) for d in derivations)
 
@@ -46,10 +48,10 @@ def test_derive_finds_both_napkin_formulas() -> None:
 @pytest.mark.parametrize(
     ("name", "bound"),
     [
-        ("front-door", 4),
-        ("napkin", 3),
-        ("confounder and mediator", 2),
-        ("collider and mediator", 0),
+        ("front-door", 8),
+        ("napkin", 6),
+        ("confounder and mediator", 4),
+        ("collider and mediator", 1),
     ],
 )
 def test_derive_recovers_the_classes_of_id_on_equivalent_queries(
@@ -58,7 +60,7 @@ def test_derive_recovers_the_classes_of_id_on_equivalent_queries(
 ) -> None:
     task = CURATED[name]
     archive = Archive(task)
-    for derivation in derive(*task, bound=bound):
+    for derivation in derive(*task, bound=bound, costs={"transport": 1}):
         archive.submit(derivation.formula, derivation)
 
     for formula in {identify(*task), *identify_equivalent(*task).values()}:
@@ -88,7 +90,7 @@ def test_derivations_on_random_graphs_identify_their_target() -> None:
     for task in random_tasks(8, size=5, density=0.4, seed=0):
         graph = ADMG.parse(task.graph)
         falsifier = HPFalsifier(task.graph)
-        for derivation in derive(*task, bound=1):
+        for derivation in derive(*task, bound=1, costs={"transport": 1}):
             assert derivation.verify(graph)
             assert falsifier.check(task.target, derivation.formula)
 
@@ -133,18 +135,26 @@ def test_explicit_unit_costs_preserve_derivations_and_order() -> None:
     assert derive(
         *task,
         bound=3,
+        limit=3,
         costs={"marginalization": 1, "conditioning": 1, "chain rule": 1},
-    ) == derive(*task, bound=3)
-    assert derive(*task, bound=3, costs={}) == derive(*task, bound=3)
+    ) == derive(*task, bound=3, limit=3)
+    assert derive(*task, bound=3, costs={}, limit=3) == derive(
+        *task, bound=3, limit=3
+    )
 
 
 def test_weighted_costs_shift_the_search_bound() -> None:
     task = CURATED["napkin"]
-    costs = {"marginalization": 2, "conditioning": 3, "chain rule": 4}
-    assert derive(*task, bound=8, costs=costs) == []
-    derivations = derive(*task, bound=9, costs=costs)
+    costs = {
+        "marginalization": 2,
+        "conditioning": 3,
+        "chain rule": 4,
+        "transport": 1,
+    }
+    assert derive(*task, bound=11, costs=costs) == []
+    derivations = derive(*task, bound=12, costs=costs)
     assert [d.formula for d in derivations] == [
-        d.formula for d in derive(*task, bound=3)
+        d.formula for d in derive(*task, bound=6, costs={"transport": 1})
     ]
     assert all(d.verify(ADMG.parse(task.graph)) for d in derivations)
 
