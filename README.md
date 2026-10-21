@@ -133,6 +133,73 @@ for derivation in derive(*napkin, bound=3):
 # sum_{Z} { p(Z | X) icd_{X | Z} { sum_{W} { p(W) p(X, Y | W, Z) } } }
 ```
 
+Probability rules cost one by default; base terms and do-calculus are free.
+Pass, for example, `costs={"marginalization": 2, "conditioning": 3}` to
+`derive` to override individual rule costs. Costs must be positive integers;
+omitted rules still cost one. `bound` limits the total weighted cost.
+
+A separate A* engine explores unfinished proof trees by their committed cost
+plus a heuristic estimate for each unresolved query:
+
+```python
+from formula_search.astar import derive as derive_astar
+
+# Zero heuristic by default: uniform-cost search; stop at the first class.
+derivations = derive_astar(*napkin, bound=3, limit=1)
+```
+
+It accepts the same `costs` mapping and an optional `heuristic(query)`
+callback. To guarantee minimum-cost discovery, estimates must be admissible:
+nonnegative lower bounds on the cost of deriving the query, accounting for
+free do-calculus steps. The default zero estimate satisfies this requirement.
+Without `limit`, it explores the full bound. It deduplicates completed
+formulas but does not cache subproof classes; use small graphs and bounds.
+
+
+Heuristics and tie-breakers can be mixed independently:
+
+```python
+from formula_search.heuristics import (
+    conditioning_size,
+    free_proof_bound,
+    lookahead_bound,
+    max_of,
+    summation_count,
+    term_count,
+)
+
+costs = {"marginalization": 2}
+derivations = derive_astar(
+    *napkin,
+    bound=4,
+    costs=costs,
+    heuristic=max_of(
+        free_proof_bound(napkin.graph, costs=costs),
+        lookahead_bound(napkin.graph, depth=2, costs=costs),
+    ),
+    tiebreaker=[
+        term_count(),
+        summation_count(weight=2),
+        conditioning_size(),
+    ],
+)
+```
+
+`max_of` takes the largest bound, preserving admissibility when its inputs
+are admissible. Use the same graph and rule costs in the factories and the
+search. Remove bounds to exclude them; `max_of()` is zero. Tie-breaker
+scores are summed, with smaller scores preferred only at equal A* priority.
+Remove scorers, set their weights to zero, or use `tiebreaker=[]` to disable
+all tie-breakers. `expression_size()` counts all expression nodes, and
+`conditioning_count()` counts ICD operations.
+
+A custom tie-breaker is a callable receiving a read-only `SearchState` with
+`query`, committed `cost`, `pending` queries, an `expression`, and an optional
+completed `derivation`. Unfinished expressions use kernel placeholders and
+provisional transport weights; they estimate size and are not formulas.
+Completed candidates use their actual simplified expressions. Tie-breaking
+guides discovery; it does not guarantee globally smallest formulas.
+
 ## 🗂️ Layout
 
 ```
@@ -143,6 +210,8 @@ src/formula_search/
 ├── evaluator.py                 archives of distinct valid formulas
 ├── suite.py                     curated and random tasks
 ├── derivation.py                derivation search
+├── astar.py                     A* over unfinished derivations
+├── heuristics.py                cost bounds and expression tie-breakers
 └── baselines/
     ├── id.py                    the ID and IDC algorithms
     ├── equivalent_queries.py    ID applied to equivalent queries
