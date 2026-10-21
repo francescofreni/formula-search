@@ -126,3 +126,68 @@ def written(target: Query, rule: str, premises: tuple[Query, ...]) -> str:
     (c,) = target.conditions - premise.conditions
     inputs = ", ".join(sorted(premise.inputs))
     return f"icd_{{{c} | {inputs}}} {{ {premise} }}"
+
+
+def test_explicit_unit_costs_preserve_derivations_and_order() -> None:
+    task = CURATED["napkin"]
+    assert derive(
+        *task,
+        bound=3,
+        costs={"marginalization": 1, "conditioning": 1, "chain rule": 1},
+    ) == derive(*task, bound=3)
+    assert derive(*task, bound=3, costs={}) == derive(*task, bound=3)
+
+
+def test_weighted_costs_shift_the_search_bound() -> None:
+    task = CURATED["napkin"]
+    costs = {"marginalization": 2, "conditioning": 3, "chain rule": 4}
+    assert derive(*task, bound=8, costs=costs) == []
+    derivations = derive(*task, bound=9, costs=costs)
+    assert [d.formula for d in derivations] == [
+        d.formula for d in derive(*task, bound=3)
+    ]
+    assert all(d.verify(ADMG.parse(task.graph)) for d in derivations)
+
+
+@pytest.mark.parametrize(
+    ("rule", "target"),
+    [
+        ("marginalization", query("Y")),
+        ("conditioning", query("Y", conditions="X")),
+        ("chain rule", query("X Y")),
+    ],
+)
+def test_each_rule_uses_its_configured_cost(rule: str, target: Query) -> None:
+    from formula_search.derivation import _Search
+
+    graph = ADMG.parse("X -> Y")
+    search = _Search(graph, costs={rule: 3})
+    assert not any(d.rule == rule for d in search.direct(target, 2))
+    matches = [d for d in search.direct(target, 3) if d.rule == rule]
+    assert matches
+    assert all(d.verify(graph) for d in matches)
+
+
+def test_base_and_do_calculus_remain_free() -> None:
+    assert [
+        d.formula
+        for d in derive("X -> Y", "X", "Y", bound=0, costs={"conditioning": 5})
+    ] == ["p(Y | X)"]
+
+
+@pytest.mark.parametrize("cost", [0, -1, 1.5, True, "2", None])
+def test_invalid_rule_costs_are_rejected(cost: object) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        derive(
+            "X -> Y",
+            "X",
+            "Y",
+            bound=0,
+            costs={"conditioning": cost},  # type: ignore[dict-item]
+        )
+
+
+@pytest.mark.parametrize("rule", ["unknown", "base", "do-calculus"])
+def test_unknown_or_free_rule_costs_are_rejected(rule: str) -> None:
+    with pytest.raises(ValueError, match="Unknown probability rule"):
+        derive("X -> Y", "X", "Y", bound=0, costs={rule: 1})

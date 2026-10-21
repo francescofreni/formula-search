@@ -18,7 +18,7 @@ that a derivation has but its query lacks, as ``z`` in
 
 The expressions derived are infinitely many (Yvernes et al., Section 6), but
 the queries are finitely many. The search derives every query breadth-first
-in the number of rules of probability, and keeps one derivation per class of
+in total probability-rule cost, and keeps one derivation per class of
 each query: two expressions are in one class if HiProF finds them equal on
 the complete DAG, as in the evaluator, which checks only expressions with the
 same :mod:`~formula_search.fingerprints`. This loses no class of the target,
@@ -28,7 +28,7 @@ since expressions of one class combine into expressions of one class.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from itertools import combinations, pairwise
@@ -46,6 +46,28 @@ from .graph import ADMG
 Rule = Literal[
     "base", "marginalization", "conditioning", "chain rule", "do-calculus"
 ]
+
+
+_DEFAULT_COSTS = {
+    "marginalization": 1,
+    "conditioning": 1,
+    "chain rule": 1,
+}
+
+
+def _rule_costs(costs: Mapping[str, int] | None) -> dict[str, int]:
+    """Validate overrides and return the probability-rule costs."""
+    result = _DEFAULT_COSTS.copy()
+    if costs is not None:
+        for rule, cost in costs.items():
+            if rule not in result:
+                raise ValueError(f"Unknown probability rule: {rule!r}")
+            if type(cost) is not int or cost <= 0:
+                raise ValueError(
+                    f"Cost for {rule!r} must be a positive integer"
+                )
+            result[rule] = cost
+    return result
 
 
 @dataclass(frozen=True)
@@ -132,21 +154,27 @@ def derive(
     treatments: str | Iterable[str],
     outcomes: str | Iterable[str],
     bound: int,
+    *,
+    costs: Mapping[str, int] | None = None,
 ) -> list[Derivation]:
     """Derive formulas for ``p(outcomes | do(treatments))``.
 
     :param graph: Acyclic directed mixed graph in hiprof's syntax.
     :param treatments: Treatment variable, or variables.
     :param outcomes: Outcome variable, or variables.
-    :param bound: The largest number of rules of probability in a derivation.
+    :param bound: The largest total probability-rule cost in a derivation.
+    :param costs: Positive integer costs for marginalization, conditioning,
+        and chain rule. Omitted rules cost one. Base terms and do-calculus
+        steps remain free.
     :returns: One derivation for each class of formulas found, in the order
-        of their number of rules of probability.
+        of their total probability-rule cost.
     :raises ValueError: If the graph is invalid, the outcomes are empty, or
-        the variables overlap or are not nodes of the graph.
+        the variables overlap or are not nodes of the graph, or rule costs
+        have unknown names or are not positive integers.
     """
     admg = ADMG.parse(graph)
     x, y, _ = parse_query(admg, treatments, outcomes)
-    search = _Search(admg)
+    search = _Search(admg, costs=costs)
     return [
         derivation
         for cost in range(bound + 1)
@@ -179,7 +207,10 @@ def rules(
 class _Search:
     """Derivations of the queries of a graph, by rules of probability."""
 
-    def __init__(self, graph: ADMG) -> None:
+    def __init__(
+        self, graph: ADMG, *, costs: Mapping[str, int] | None = None
+    ) -> None:
+        self.costs = _rule_costs(costs)
         self.graph = graph
         self.complete = HPFalsifier(str(graph.complete()))
         self.model = FixedModel(graph.nodes)
@@ -191,7 +222,7 @@ class _Search:
         )
 
     def layer(self, query: Query, cost: int) -> list[Derivation]:
-        """Return derivations of ``query`` with ``cost`` rules of probability.
+        """Return derivations of ``query`` with total rule cost ``cost``.
 
         There is one for each class that no derivation with fewer reaches.
         """
@@ -223,10 +254,12 @@ class _Search:
                 self.direct_steps[query, cost] = [
                     Derivation(query, rule, combination)
                     for rule, premises in rules(self.graph, query)
+                    for remaining in (cost - self.costs[rule],)
+                    if remaining >= 0
                     for costs in cartesian_product(
-                        range(cost), repeat=len(premises)
+                        range(remaining + 1), repeat=len(premises)
                     )
-                    if sum(costs) == cost - 1
+                    if sum(costs) == remaining
                     for combination in cartesian_product(
                         *map(self.layer, premises, costs)
                     )

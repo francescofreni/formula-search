@@ -185,7 +185,9 @@ derive a query, and the chain rule needs both of its premises derived.
 
 ### The algorithm
 
-The **cost** of a derivation is its number of rules of probability.
+The **cost** of a derivation is the sum of its probability-rule costs.
+Each rule defaults to one; the optional `costs` mapping overrides individual
+rules with positive integers. Base terms and do-calculus steps remain free.
 `derive` asks the search for the derivations of the target at costs
 0, 1, …, `bound`. The search is
 [`_Search`](src/formula_search/derivation.py#L179), which runs two mutually
@@ -202,7 +204,7 @@ layer(q, c):   derivations of q with cost c, one per class not reached by cost <
 direct(q, c):  derivations whose last rule applies to q itself
     c = 0:  [base(q)] if q has no do(), else []
     c > 0:  for each rule of probability q <- (p1, ..., pk):
-                for each split c1 + ... + ck = c - 1:
+                for each split c1 + ... + ck = c - cost(rule):
                     for each choice d1 in layer(p1, c1), ..., dk in layer(pk, ck):
                         Derivation(q, rule, (d1, ..., dk))
 ```
@@ -223,10 +225,40 @@ from the rules. So a wrong "same class" verdict, with probability at most
 about 1e-14 per check, could drop a class, but it could never let an
 invalid formula through.
 
+### A* engine
+
+[astar.py](src/formula_search/astar.py) provides a separate `derive` entry
+point with the same graph, query, bound, and probability-rule costs. It
+orders unfinished proof trees by committed cost plus the sum of
+`heuristic(query)` over all unresolved premises. The default zero heuristic
+gives uniform-cost search. `limit` optionally stops after a number of new
+formula classes. Minimum-cost discovery requires admissible estimates,
+including zero for queries with free proofs through do-calculus.
+
+It reuses probability rules, proof trees, transport, and cost validation.
+Completed formulas are deduplicated on a complete DAG. Unlike `_Search` in
+`derivation.py`, it does not merge subproof classes or memoize solved
+subproblems, so its frontier can grow rapidly. Equivalence with the bounded
+engine is tested on small examples; this is not yet guided search at scale.
+
+[heuristics.py](src/formula_search/heuristics.py) supplies `zero`,
+`free_proof_bound`, and bounded-depth `lookahead_bound`, combined with
+`max_of`. The factories account for equivalent queries and custom costs;
+they must be configured with the search's graph and costs. An optional
+`tiebreaker` callable or list of callables scores a public `SearchState`.
+Scores are summed after the A* priority, with stable insertion order last.
+Built-in scorers count terms, summations, ICD operations, maximum input-set
+size, or all expression nodes, each with an optional nonnegative weight.
+Unfinished expressions use placeholders and provisional transport weights;
+completed formulas, including individual transport choices, are scored
+using their actual expressions. These are size tie-breakers among equal
+priorities, not admissible estimates of remaining proof cost or guarantees
+of globally minimum formula size. The default search order is unchanged.
+
 ### Arguments
 
 ```python
-derive(graph, treatments, outcomes, bound) -> list[Derivation]
+derive(graph, treatments, outcomes, bound, *, costs=None) -> list[Derivation]
 ```
 
 | Argument | Type | Meaning |
@@ -234,7 +266,11 @@ derive(graph, treatments, outcomes, bound) -> list[Derivation]
 | `graph` | `str` | ADMG in hiprof's syntax, such as `"T -> M; M -> Y; T <-> Y"` |
 | `treatments` | `str` or iterable of `str` | The intervened variables `x` of `p(y \| do(x))` |
 | `outcomes` | `str` or iterable of `str` | The outcomes `y`, not empty |
-| `bound` | `int` | The largest number of rules of probability in a derivation. Do-calculus steps and base terms are free |
+| `bound` | `int` | The largest total probability-rule cost. Do-calculus steps and base terms are free |
+
+`costs` maps probability-rule names (`"marginalization"`, `"conditioning"`,
+`"chain rule"`) to positive integers; omitted rules cost one. Unknown names
+and invalid costs raise `ValueError`.
 
 A `Task` unpacks into the first three arguments: `derive(*task, bound=4)`.
 The function returns one derivation per class of the target found, in order
