@@ -250,8 +250,10 @@ class _Search:
                     self.classes.append(derivation.formula)
                     yield derivation
 
-    def expand(self, plan: _Plan, budget: int) -> Iterator[tuple[int, _Plan]]:
-        """Resolve the first unfinished leaf with a base or probability rule."""
+    def expand(
+        self, plan: _Plan, budget: int | None
+    ) -> Iterator[tuple[int, _Plan]]:
+        """Resolve the first leaf; None offers every rule regardless of cost."""
         if plan.rule is not None:
             for index, premise in enumerate(plan.premises):
                 if premise.pending:
@@ -272,7 +274,7 @@ class _Search:
                 yield 0, _Plan(query, member, "base", path=path)
             for rule, premises in rules(self.graph, member):
                 added = self.costs[rule]
-                if added <= budget:
+                if budget is None or added <= budget:
                     yield added, _Plan(
                         query,
                         member,

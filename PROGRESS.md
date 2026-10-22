@@ -460,16 +460,39 @@ it, then using the A3 numbers below to decide 1.
    module, ranking the edges of each query instead of expanding them
    breadth-first.
 
-## Minimal agentic controller
+## Agent-selected proof moves
 
-`agentic.Session` now wraps fresh A* searches with a model-independent
-prompt/JSON-action/feedback loop. A caller-provided text callback chooses
-bound, class limit, and built-in guidance, or stops. One archive persists
-across rounds and replays each submitted derivation; feedback distinguishes
-new and duplicate classes. Tests use scripted responses, requiring no API.
-See `src/formula_search/agentic/README.md` for a runnable example.
+`agentic.Session` now lets a model choose one deterministic legal move at
+each node, replacing the configuration-level controller. It reuses A* plan
+expansion without its heuristic or priority queue. Unchosen siblings are
+retained for depth-first backtracking; final proof/weight variants are also
+selected by the model, then replayed through the archive. `max_steps` restricts model decisions and preserves the frontier
+for a subsequent run call. Move IDs and JSON history support replay/debugging.
 
-This is experiment-level guidance only. It does not add inference rules,
-resume frontiers, persist to disk, or impose expansion/time budgets. Search
-cost/output caps and a controller-round cap are explicit; class-limited
-results are not reported as exhaustive.
+`agentic.Fireworks` uses Chat Completions with an enum-constrained JSON schema,
+reading FIREWORKS_API_KEY or ~/.config/fireworksai/api_key. Model selection is
+explicit or via FIREWORKS_MODEL. The module CLI runs a small example. Tests
+cover scripted node choices, exhaustive small-graph class recovery, stale
+IDs, backtracking, and mocked provider requests; they make no paid API calls.
+
+Moves still bundle do-calculus paths with probability rules, inheriting the
+current A* search-space limits. No independent transport composition, disk
+checkpoints, option-count limit, or wall-time budget is added. See
+`src/formula_search/agentic/README.md` for usage and limitations.
+
+The agentic traversal now prunes duplicate partial equations at equal or
+higher cost, retaining cheaper routes. Keys preserve unresolved query types,
+work order, and deferred transports; adjacent marginalizations are normalized.
+Completed exact formula duplicates are also skipped, while Archive retains
+its separate class check. Prunes have an audit log and can be disabled for
+comparisons. An exhaustive three-node bound-2 regression retains five classes
+while reducing decisions from 189 to 113 (76 options pruned).
+
+
+Agentic proof-cost bounds have now been removed. `Session` and its CLI
+accept only a decision budget (`run(..., max_steps=...)`) for search; rule
+costs remain recorded and duplicate states still retain cheaper routes.
+A*'s shared private expansion accepts `budget=None` to enumerate all local
+moves; the public deterministic/A* bound behavior is unchanged. The agent
+can spend all decisions on a deep branch and need not exhaust its frontier.
+The agentic Slurm command no longer passes --bound.

@@ -1,5 +1,6 @@
-"""Minimal LLM-controlled search; the existing engine supplies proofs."""
+"""Model-chosen legal proof moves, with deterministic execution."""
 
+from .fireworks import Fireworks
 from .loop import Session
 
-__all__ = ["Session"]
+__all__ = ["Fireworks", "Session"]
