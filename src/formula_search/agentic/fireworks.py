@@ -23,7 +23,7 @@ class Fireworks:
         *,
         api_key: str | None = None,
         timeout: float = 120,
-        max_tokens: int = 16384,
+        max_tokens: int | None = None,
         reasoning_effort: str | None = None,
     ) -> None:
         self.model = model or os.environ.get("FIREWORKS_MODEL", "")
@@ -37,7 +37,9 @@ class Fireworks:
             raise ValueError("Set FIREWORKS_API_KEY or supply an api_key")
         self._key = key.strip()
         self.timeout = timeout
-        if type(max_tokens) is not int or max_tokens < 1:
+        if max_tokens is not None and (
+            type(max_tokens) is not int or max_tokens < 1
+        ):
             raise ValueError("max_tokens must be a positive integer")
         self.max_tokens = max_tokens
         self.reasoning_effort = reasoning_effort
@@ -54,9 +56,22 @@ class Fireworks:
         )
 
     def __call__(self, prompt: str) -> str:
-        options = json.loads(prompt)["options"]
+        state = json.loads(prompt)
+        options = state["options"]
         if not options:
             raise ValueError("No legal moves to choose from")
+        ids = [option["id"] for option in options]
+        field = "keep" if state.get("strategy") == "beam" else "move"
+        choice: dict[str, Any] = {"type": "integer", "enum": ids}
+        if field == "keep":
+            count = state["selection_count"]
+            choice = {
+                "type": "array",
+                "items": choice,
+                "minItems": count,
+                "maxItems": count,
+                "uniqueItems": True,
+            }
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
@@ -65,16 +80,11 @@ class Fireworks:
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "Move",
+                    "name": "BeamSelection" if field == "keep" else "Move",
                     "schema": {
                         "type": "object",
-                        "properties": {
-                            "move": {
-                                "type": "integer",
-                                "enum": [option["id"] for option in options],
-                            }
-                        },
-                        "required": ["move"],
+                        "properties": {field: choice},
+                        "required": [field],
                         "additionalProperties": False,
                     },
                 },
@@ -83,6 +93,8 @@ class Fireworks:
         return self._request(payload)
 
     def _request(self, payload: dict[str, Any]) -> str:
+        if payload.get("max_tokens") is None:
+            payload.pop("max_tokens", None)
         if self.reasoning_effort is not None:
             payload["reasoning_effort"] = self.reasoning_effort
         request = Request(
@@ -104,7 +116,7 @@ class Fireworks:
             detail = (
                 f"finish_reason={reason!r}, "
                 f"completion_tokens={usage.get('completion_tokens')}, "
-                f"max_tokens={payload['max_tokens']}, "
+                f"max_tokens={payload.get('max_tokens', 'provider default')}, "
                 f"content_chars={len(text) if isinstance(text, str) else 0}"
             )
             hint = (

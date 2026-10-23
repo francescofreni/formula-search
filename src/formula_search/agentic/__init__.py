@@ -1,6 +1,10 @@
-"""Model-chosen legal proof moves, with deterministic execution."""
+"""LLM-selected depth-first and beam proof search."""
 
+from .beam import BeamSession
+from .depth_first import DepthFirstSession
 from .fireworks import Fireworks
-from .loop import Session
 
-__all__ = ["Fireworks", "Session"]
+# Existing callers retain depth-first semantics.
+Session = DepthFirstSession
+
+__all__ = ["BeamSession", "DepthFirstSession", "Fireworks", "Session"]

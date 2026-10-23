@@ -151,6 +151,7 @@ def test_fireworks_request_and_schema(monkeypatch: pytest.MonkeyPatch) -> None:
     assert request.get_header("Authorization") == "Bearer test-secret"
     payload = json.loads(request.data)
     assert payload["model"] == "accounts/test/models/example"
+    assert "max_tokens" not in payload
     assert "test-secret" not in request.data.decode()
     schema = payload["response_format"]["json_schema"]["schema"]
     assert schema["properties"]["move"]["enum"] == [
@@ -220,6 +221,7 @@ def test_fireworks_plain_prompt_has_no_move_schema() -> None:
     payload = json.loads(send.call_args.args[0].data)
     assert payload["messages"] == [{"role": "user", "content": "Say hello."}]
     assert "response_format" not in payload
+    assert "max_tokens" not in payload
 
 
 def test_reasoning_budget_and_length_diagnostics() -> None:

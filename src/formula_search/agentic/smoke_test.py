@@ -15,7 +15,7 @@ def main() -> None:
     parser.add_argument(
         "--model", help="Fireworks model ID; or FIREWORKS_MODEL"
     )
-    parser.add_argument("--max-tokens", type=int, default=16384)
+    parser.add_argument("--max-tokens", type=int, default=None)
     args = parser.parse_args()
     print(
         Fireworks(args.model, max_tokens=args.max_tokens).complete(args.prompt)

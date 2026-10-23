@@ -14,7 +14,8 @@ import sys
 from urllib.error import URLError
 
 from ..evaluator import Task
-from . import Fireworks, Session
+from . import BeamSession, DepthFirstSession, Fireworks
+from .common import SearchSession
 
 
 def main() -> None:
@@ -25,15 +26,37 @@ def main() -> None:
     parser.add_argument(
         "--model", help="Fireworks model ID; or FIREWORKS_MODEL"
     )
-    parser.add_argument("--max-steps", type=int, default=20)
-    parser.add_argument("--max-tokens", type=int, default=16384)
+    parser.add_argument(
+        "--strategy", choices=("depth-first", "beam"), default="depth-first"
+    )
+    parser.add_argument("--beam-width", type=int, default=None)
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=20,
+        help="Model decisions: one move for depth-first, one layer for beam",
+    )
+    parser.add_argument("--max-tokens", type=int, default=None)
     parser.add_argument(
         "--reasoning-effort",
         default=None,
         help="Optional model-supported reasoning effort",
     )
     args = parser.parse_args()
-    session = Session(Task(args.graph, args.treatment, args.outcome))
+    if args.max_steps < 1:
+        parser.error("--max-steps must be positive")
+    if args.beam_width is not None and (
+        args.strategy != "beam" or args.beam_width < 1
+    ):
+        parser.error(
+            "--beam-width requires --strategy beam and a positive value"
+        )
+    task = Task(args.graph, args.treatment, args.outcome)
+    session: SearchSession
+    if args.strategy == "beam":
+        session = BeamSession(task, beam_width=args.beam_width or 3)
+    else:
+        session = DepthFirstSession(task)
     model = Fireworks(
         args.model,
         max_tokens=args.max_tokens,
@@ -59,6 +82,13 @@ def main() -> None:
     print(
         json.dumps(
             {
+                "strategy": args.strategy,
+                "beam_width": (
+                    session.beam_width
+                    if isinstance(session, BeamSession)
+                    else None
+                ),
+                "max_steps": args.max_steps,
                 "status": status,
                 "error": error,
                 "history": session.history,

@@ -8,6 +8,23 @@ project state in [STATUS.md](../formula-search-docs/STATUS.md). Usage
 examples for each public function are in the [README](README.md); this file
 says what exists, how the derivation search works, and what comes next.
 
+## A* budget update
+
+A* accepts `max_pops` and optional `SearchStats` to cap and record actual heap
+removals. `bound=None` removes the proof-cost cap when a pop budget is supplied.
+The comparison uses 100 pops, 100 depth-first decisions, or `100 // beam_width`
+beam layers; bounded derivation runs remain separate reference baselines.
+
+## Agentic search update
+
+Agentic search now exposes `DepthFirstSession` (the original `Session` API)
+and `BeamSession`. Both share deterministic legal expansion and proof replay;
+beam search asks the model to retain a global width-limited candidate subset
+at each layer. Selected completed proofs enter the archive. Beam rejection
+is permanent for that branch, so an empty beam is not exhaustive search.
+See [agentic usage and layout](src/formula_search/agentic/README.md).
+The earlier implementation snapshot below predates these additions.
+
 ## At a glance
 
 All work so far belongs to stage A of the plan, ground truth and non-learned
