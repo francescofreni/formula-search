@@ -23,7 +23,7 @@ bounded search does not establish non-identifiability.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Generator, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from functools import cached_property
 from heapq import heappop, heappush
@@ -98,20 +98,41 @@ class _Plan:
             yield from _transport(direct, self.query, self.path)
 
 
+@dataclass
+class SearchStats:
+    """Actual queue work and termination reason for one derive() call.
+
+    Every heappop counts, including completed proofs and duplicate formulas.
+    A pop may generate many successors or transport-weight candidates.
+    """
+
+    queue_pops: int = 0
+    frontier_size: int = 0
+    stop_reason: str = "not_started"
+
+
 def derive(
     graph: str,
     treatments: str | Iterable[str],
     outcomes: str | Iterable[str],
-    bound: int,
+    bound: int | None,
     *,
     costs: Mapping[str, int] | None = None,
     heuristic: Heuristic | None = None,
     tiebreaker: Tiebreaker | Iterable[Tiebreaker] | None = None,
     limit: int | None = None,
+    max_pops: int | None = None,
+    stats: SearchStats | None = None,
 ) -> list[Derivation]:
     """Search for formulas for ``p(outcomes | do(treatments))`` with A*.
 
-    :param bound: Maximum total probability-rule cost, a nonnegative integer.
+    :param bound: Maximum total probability-rule cost, or None for no cost
+        bound. Unbounded-cost search requires max_pops.
+    :param max_pops: Stop after at most this many priority-queue removals.
+        Includes partial plans, completed plans, and proof candidates. None
+        preserves the original exhaustive bounded search.
+    :param stats: Optional mutable record of pops, frontier size and stop reason.
+        Discovered proofs are returned even when the pop budget is reached.
     :param costs: Positive integer costs by probability-rule name. Omitted
         rules cost one; base terms and do-calculus steps are free.
     :param heuristic: A finite nonnegative estimate of the remaining cost
@@ -132,8 +153,12 @@ def derive(
     :raises ValueError: For invalid graph/query arguments, costs, bounds,
         limits, heuristic estimates, or tie-breaker scores.
     """
-    if type(bound) is not int or bound < 0:
-        raise ValueError("Bound must be a nonnegative integer")
+    if bound is not None and (type(bound) is not int or bound < 0):
+        raise ValueError("Bound must be a nonnegative integer or None")
+    if max_pops is not None and (type(max_pops) is not int or max_pops <= 0):
+        raise ValueError("max_pops must be a positive integer")
+    if bound is None and max_pops is None:
+        raise ValueError("Unbounded-cost search requires max_pops")
     if limit is not None and (type(limit) is not int or limit <= 0):
         raise ValueError("Limit must be a positive integer")
     admg = ADMG.parse(graph)
@@ -141,11 +166,19 @@ def derive(
     search = _Search(
         admg, costs=costs, heuristic=heuristic, tiebreaker=tiebreaker
     )
+    progress = stats if stats is not None else SearchStats()
     found = []
-    for derivation in search.run(Query(y, x), bound):
-        found.append(derivation)
-        if limit is not None and len(found) == limit:
-            break
+    iterator = search.run(
+        Query(y, x), bound, max_pops=max_pops, stats=progress
+    )
+    try:
+        for derivation in iterator:
+            found.append(derivation)
+            if limit is not None and len(found) == limit:
+                progress.stop_reason = "class_limit"
+                break
+    finally:
+        iterator.close()
     return found
 
 
@@ -206,8 +239,19 @@ class _Search:
             raise ValueError("Tie-breaker scores must be finite")
         return total
 
-    def run(self, query: Query, bound: int) -> Iterator[Derivation]:
+    def run(
+        self,
+        query: Query,
+        bound: int | None,
+        *,
+        max_pops: int | None = None,
+        stats: SearchStats | None = None,
+    ) -> Generator[Derivation, None, None]:
         """Expand by f, then tie-breaker score, then stable insertion order."""
+        progress = stats if stats is not None else SearchStats()
+        progress.queue_pops = 0
+        progress.frontier_size = 0
+        progress.stop_reason = "running"
         serial = count()
         initial = _Plan(query)
         frontier: list[tuple[float, float, int, int, _Plan | Derivation]] = []
@@ -226,32 +270,43 @@ class _Search:
             )
 
         push(initial, 0)
-        while frontier:
-            _, _, _, cost, item = heappop(frontier)
-            if isinstance(item, Derivation):
-                candidates: Iterable[Derivation] = (item,)
-            elif not item.pending:
-                if self.tiebreakers:
-                    # Score each transport weight's actual expression before
-                    # accepting a formula, rather than emitting a whole batch.
-                    for derivation in item.derivations():
-                        push(derivation, cost)
+        try:
+            while frontier and (
+                max_pops is None or progress.queue_pops < max_pops
+            ):
+                _, _, _, cost, item = heappop(frontier)
+                progress.queue_pops += 1
+                if isinstance(item, Derivation):
+                    candidates: Iterable[Derivation] = (item,)
+                elif not item.pending:
+                    if self.tiebreakers:
+                        # Score each transport weight's actual expression before
+                        # accepting a formula, rather than emitting a whole batch.
+                        for derivation in item.derivations():
+                            push(derivation, cost)
+                        continue
+                    candidates = item.derivations()
+                else:
+                    for added, expanded in self.expand(
+                        item, None if bound is None else bound - cost
+                    ):
+                        push(expanded, cost + added)
                     continue
-                candidates = item.derivations()
-            else:
-                for added, expanded in self.expand(item, bound - cost):
-                    push(expanded, cost + added)
-                continue
-            for derivation in candidates:
-                if not any(
-                    self.complete.check(formula, derivation.formula)
-                    for formula in self.classes
-                ):
-                    self.classes.append(derivation.formula)
-                    yield derivation
+                for derivation in candidates:
+                    if not any(
+                        self.complete.check(formula, derivation.formula)
+                        for formula in self.classes
+                    ):
+                        self.classes.append(derivation.formula)
+                        yield derivation
+            progress.stop_reason = "pop_limit" if frontier else "exhausted"
+        finally:
+            progress.frontier_size = len(frontier)
 
-    def expand(self, plan: _Plan, budget: int) -> Iterator[tuple[int, _Plan]]:
-        """Resolve the first unfinished leaf with a base or probability rule."""
+    def expand(
+        self, plan: _Plan, budget: int | None
+    ) -> Iterator[tuple[int, _Plan]]:
+        """Resolve the first leaf; None offers every rule regardless of cost."""
         if plan.rule is not None:
             for index, premise in enumerate(plan.premises):
                 if premise.pending:
@@ -272,7 +327,7 @@ class _Search:
                 yield 0, _Plan(query, member, "base", path=path)
             for rule, premises in rules(self.graph, member):
                 added = self.costs[rule]
-                if added <= budget:
+                if budget is None or added <= budget:
                     yield added, _Plan(
                         query,
                         member,
