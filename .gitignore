@@ -26,6 +26,14 @@ progress-slides.*
 !progress-slides.tex
 
 # Local/editor files
+AGENTS.md
 .idea/
 .vscode/
 .DS_Store
+
+# Local experiments
+/experiments/
+
+# Job output logs
+*.err
+*.out
