@@ -11,13 +11,13 @@ from ..astar import _Plan
 from ..derivation import Derivation
 from ..evaluator import Task
 from .common import (
-    DISCOVERY_OBJECTIVE,
     SearchSession,
     _chosen_leaf,
     _integer,
     _Move,
     _state_key,
 )
+from .prompts import PROMPT_VERSION, get_prompt
 
 
 @dataclass
@@ -47,7 +47,9 @@ class DepthFirstSession(SearchSession):
         *,
         costs: Mapping[str, int] | None = None,
         prune_duplicates: bool = True,
+        prompt_version: str = PROMPT_VERSION,
     ) -> None:
+        self.prompt_template = get_prompt("depth-first", prompt_version)
         super().__init__(task, costs=costs, prune_duplicates=prune_duplicates)
         self._stack: list[_Frame] = []
         self._descend(_Plan(task.query), 0)
@@ -106,19 +108,8 @@ class DepthFirstSession(SearchSession):
         return json.dumps(
             {
                 "strategy": "depth-first",
-                "instructions": DISCOVERY_OBJECTIVE
-                + (
-                    "Which offered move should we apply next? "
-                    'Return only {"move": INTEGER_ID}. '
-                    "There is no proof-cost bound; costs are recorded only. "
-                    "Choose one local step. All offered moves are legal. "
-                    "UNRESOLVED marks a kernel still to derive. "
-                    "Marginalize[V] sums out V; Condition[V] conditions on V. "
-                    "Transport converts equivalent queries; its averaging "
-                    "weights remain deferred until a submit option. "
-                    "Equations containing these operators are proof templates. "
-                    "All unresolved terms must eventually be resolved."
-                ),
+                **self.prompt_template.metadata,
+                "instructions": self.prompt_template.instructions,
                 "graph": self.task.graph,
                 "target": str(self.task.query),
                 "current_equation": (

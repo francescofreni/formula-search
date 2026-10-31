@@ -293,3 +293,43 @@ Use `--api-timeout` and `--max-retries` in the CLI or comparison runner; setting
 stderr. Experiments additionally save `retries.jsonl` with decision numbers and
 append readable events to `run.log`. Settings are included in replay manifests.
 The agentic-only Slurm fleet allows two concurrent jobs.
+
+### Exploratory discovery prompts
+
+`prompts.py` selects frozen instructions from [prompt_history](prompt_history/README.md). Version
+`exploratory-v3` asks for alternative adjustment variables, mediator
+factorizations, conditioning sets, and averaging routes, while encouraging
+completion of promising proofs. Candidates are compared with similar known
+formulas by their factors, conditioning sets, and averaging variables. When no
+formulas are known, the prompt encourages finding a first completed proof.
+Exploratory moves are assessed for a plausible way to resolve a remaining
+expression. Both are soft preferences: useful routes may initially look familiar
+or require more steps and subproblems. No explanation is requested in the model's
+response; it still returns only the selection JSON.
+
+Longer expressions and unfamiliar terms alone
+are not evidence of a new class. Graph-specific equality must not be mistaken
+for observational identity: all valid formulas already agree on the effect in
+the task graph.
+
+Depth-first uses the active branch history to discourage undoing progress. It
+still expands the first unresolved subproblem and cannot explicitly backtrack.
+Beam selection is asked to retain complementary routes and balance completion
+with exploration, without mandatory quotas per parent or rule. These are model
+instructions, not new ranking functions or pruning rules. Legal moves, proof
+verification, budgets, and JSON response schemas are unchanged.
+
+Every decision prompt includes `prompt_version`; the CLI final report and
+comparison manifests also record it. Comparison `decisions.jsonl` retains exact
+prompts and responses, and source snapshots retain the guidance text. Evaluate
+prompt changes with the same model, graphs, budgets and repeats. This prompt has
+not yet been shown to improve discovery counts in live experiments.
+
+Select historical instructions with `--prompt-version discovery-v1`,
+`--prompt-version exploratory-v2`, `--prompt-version exploratory-v3`, or
+`--prompt-version structured-v4`.
+Python sessions accept the same `prompt_version=` keyword. The default is `structured-v4`, with headings and paragraph spacing.
+Each decision includes the selected version and a SHA-256 of its full static
+instructions. Experiment bundles also save `prompt.txt`, record the hash in their
+manifest/results, and include the version in replay commands and CSV summaries.
+See the history catalog for version differences and controlled comparison steps.

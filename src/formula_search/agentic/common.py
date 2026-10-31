@@ -17,14 +17,7 @@ from ..derivation import Derivation
 from ..evaluator import Archive, Task
 from ..expression import Term, render
 from ..graph import ADMG
-
-DISCOVERY_OBJECTIVE = (
-    "Your goal is to discover as many distinct valid identifying formulas "
-    "as possible. Use the known formulas to avoid repeatedly pursuing the "
-    "same result. Favor promising unexplored derivation routes, while "
-    "completing proofs so their formulas can be verified. Choose only from "
-    "the offered legal moves. "
-)
+from .prompts import PromptTemplate
 
 
 def _integer(value: object, name: str, minimum: int) -> int:
@@ -131,6 +124,8 @@ def _replacement(before: _Plan, after: _Plan) -> _Plan:
 
 class SearchSession(ABC):
     """Common callback interface; each step is one model decision."""
+
+    prompt_template: PromptTemplate
 
     def __init__(
         self,

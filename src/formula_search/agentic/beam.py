@@ -11,12 +11,12 @@ from ..astar import _Plan
 from ..derivation import Derivation
 from ..evaluator import Task
 from .common import (
-    DISCOVERY_OBJECTIVE,
     SearchSession,
     _integer,
     _Move,
     _state_key,
 )
+from .prompts import PROMPT_VERSION, get_prompt
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,9 @@ class BeamSession(SearchSession):
         beam_width: int = 3,
         costs: Mapping[str, int] | None = None,
         prune_duplicates: bool = True,
+        prompt_version: str = PROMPT_VERSION,
     ) -> None:
+        self.prompt_template = get_prompt("beam", prompt_version)
         self.beam_width = _integer(beam_width, "beam_width", 1)
         super().__init__(task, costs=costs, prune_duplicates=prune_duplicates)
         self.layer = 0
@@ -126,19 +128,8 @@ class BeamSession(SearchSession):
         return json.dumps(
             {
                 "strategy": "beam",
-                "instructions": DISCOVERY_OBJECTIVE
-                + (
-                    'Return only {"keep": [INTEGER_ID, ...]}. Select exactly '
-                    "selection_count distinct IDs from options, across all "
-                    "parents together. Unselected candidates are "
-                    "discarded. All offered moves are legal. Costs are "
-                    "recorded, not a budget or ranking. UNRESOLVED is a kernel "
-                    "still to derive; Marginalize sums out variables; "
-                    "Condition conditions a kernel. Transport converts "
-                    "equivalent queries with final weights deferred until "
-                    "submit. Selected submit options are verified and archived "
-                    "and do not occupy a slot in the next frontier."
-                ),
+                **self.prompt_template.metadata,
+                "instructions": self.prompt_template.instructions,
                 "graph": self.task.graph,
                 "target": str(self.task.query),
                 "layer": self.layer + 1,

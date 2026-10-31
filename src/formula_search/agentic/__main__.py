@@ -16,6 +16,7 @@ from urllib.error import URLError
 from ..evaluator import Task
 from . import BeamSession, DepthFirstSession, Fireworks
 from .common import SearchSession
+from .prompts import PROMPT_VERSION, PROMPT_VERSIONS
 
 
 def main() -> None:
@@ -28,6 +29,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--strategy", choices=("depth-first", "beam"), default="depth-first"
+    )
+    parser.add_argument(
+        "--prompt-version", choices=PROMPT_VERSIONS, default=PROMPT_VERSION
     )
     parser.add_argument("--beam-width", type=int, default=None)
     parser.add_argument(
@@ -56,9 +60,13 @@ def main() -> None:
     task = Task(args.graph, args.treatment, args.outcome)
     session: SearchSession
     if args.strategy == "beam":
-        session = BeamSession(task, beam_width=args.beam_width or 3)
+        session = BeamSession(
+            task,
+            beam_width=args.beam_width or 3,
+            prompt_version=args.prompt_version,
+        )
     else:
-        session = DepthFirstSession(task)
+        session = DepthFirstSession(task, prompt_version=args.prompt_version)
     model = Fireworks(
         args.model,
         timeout=args.api_timeout,
@@ -87,6 +95,7 @@ def main() -> None:
         json.dumps(
             {
                 "strategy": args.strategy,
+                **session.prompt_template.metadata,
                 "beam_width": (
                     session.beam_width
                     if isinstance(session, BeamSession)
