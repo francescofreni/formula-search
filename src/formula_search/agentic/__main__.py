@@ -36,6 +36,8 @@ def main() -> None:
         default=20,
         help="Model decisions: one move for depth-first, one layer for beam",
     )
+    parser.add_argument("--api-timeout", type=float, default=300)
+    parser.add_argument("--max-retries", type=int, default=5)
     parser.add_argument("--max-tokens", type=int, default=None)
     parser.add_argument(
         "--reasoning-effort",
@@ -59,6 +61,8 @@ def main() -> None:
         session = DepthFirstSession(task)
     model = Fireworks(
         args.model,
+        timeout=args.api_timeout,
+        max_retries=args.max_retries,
         max_tokens=args.max_tokens,
         reasoning_effort=args.reasoning_effort,
     )

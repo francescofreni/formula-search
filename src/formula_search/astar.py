@@ -9,9 +9,9 @@ The frontier is ordered by the cost of the chosen probability rules plus
 an estimate for every unresolved premise. The default estimate is zero,
 which gives uniform-cost search. An admissible heuristic lower-bounds the
 cheapest derivation of each query, including free do-calculus moves. With
-such a heuristic, the first derivation retained for each class has minimum
-cost. The heuristic need not be consistent, since partial trees are not
-merged or closed on their first visit.
+such a heuristic and no custom priority, the first derivation retained for
+each class has minimum cost. The heuristic need not be consistent, since
+partial trees are not merged or closed on their first visit.
 
 Completed trees are turned into replayable Derivations, including each
 weight allowed by do-calculus transport. HiProF on the complete DAG keeps
@@ -26,10 +26,11 @@ from __future__ import annotations
 from collections.abc import Generator, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from functools import cached_property
-from heapq import heappop, heappush
+from heapq import heapify, heappop, heappush
 from itertools import count
 from itertools import product as cartesian_product
 from math import isfinite
+from types import MappingProxyType
 
 from hiprof import HPFalsifier
 
@@ -38,7 +39,13 @@ from .derivation import Derivation, Rule, _rule_costs, _transport, rules
 from .docalculus import Query, equivalent_queries
 from .expression import Expression, Term, condition, marginal, product
 from .graph import ADMG
-from .heuristics import Heuristic, SearchState, Tiebreaker
+from .heuristics import (
+    Heuristic,
+    SearchState,
+    Tiebreaker,
+    _HistoryTiebreaker,
+    _terms,
+)
 
 
 @dataclass(frozen=True)
@@ -122,6 +129,7 @@ def derive(
     tiebreaker: Tiebreaker | Iterable[Tiebreaker] | None = None,
     limit: int | None = None,
     max_pops: int | None = None,
+    priority: Tiebreaker | None = None,
     stats: SearchStats | None = None,
 ) -> list[Derivation]:
     """Search for formulas for ``p(outcomes | do(treatments))`` with A*.
@@ -144,12 +152,21 @@ def derive(
         scores are summed. Lower scores break equal A* priorities. Unfinished
         expressions are size estimates; completed candidates use their actual
         expressions. Scores must be finite. None preserves insertion order.
+        new_terms()/less_explored() use per-search history and refresh queue
+        ties before each pop; refreshing adds work proportional to frontier
+        size but does not consume additional pops.
+    :param priority: Optional replacement for g+h, receiving SearchState.
+        Lower scores are popped first, then tiebreakers, then insertion order.
+        State includes estimated_remaining_cost and per-search history.
+        Custom priorities refresh before each pop and need only be finite;
+        they do not carry A*'s minimum-cost guarantee. None preserves A*.
     :param limit: Stop after this many distinct formula classes, or search
         the whole bound if None. Must be a positive integer when supplied.
     :returns: One derivation per discovered class. With an admissible
-        heuristic, discovery is in nondecreasing minimum cost; ties use the
-        supplied scorers, then deterministic insertion order. An arbitrary heuristic may discover
-        a more expensive representative first.
+        heuristic and priority=None, discovery is in nondecreasing minimum
+        cost; ties use the supplied scorers, then deterministic insertion
+        order. An arbitrary heuristic or custom priority may discover a more
+        expensive representative first.
     :raises ValueError: For invalid graph/query arguments, costs, bounds,
         limits, heuristic estimates, or tie-breaker scores.
     """
@@ -164,7 +181,11 @@ def derive(
     admg = ADMG.parse(graph)
     x, y, _ = parse_query(admg, treatments, outcomes)
     search = _Search(
-        admg, costs=costs, heuristic=heuristic, tiebreaker=tiebreaker
+        admg,
+        costs=costs,
+        heuristic=heuristic,
+        tiebreaker=tiebreaker,
+        priority=priority,
     )
     progress = stats if stats is not None else SearchStats()
     found = []
@@ -192,15 +213,22 @@ class _Search:
         costs: Mapping[str, int] | None = None,
         heuristic: Heuristic | None = None,
         tiebreaker: Tiebreaker | Iterable[Tiebreaker] | None = None,
+        priority: Tiebreaker | None = None,
     ) -> None:
         self.graph = graph
         self.costs = _rule_costs(costs)
         self.heuristic = heuristic
+        self.priority = priority
         self.tiebreakers = (
             ()
             if tiebreaker is None
             else (tiebreaker,) if callable(tiebreaker) else tuple(tiebreaker)
         )
+        self.history_dependent = priority is not None or any(
+            isinstance(score, _HistoryTiebreaker) for score in self.tiebreakers
+        )
+        self.discovered_terms: set[Term] = set()
+        self.expansion_counts: dict[Query, int] = {}
         self.estimates: dict[Query, float] = {}
         self.components: dict[Query, dict[Query, tuple[Query, ...]]] = {}
         self.complete = HPFalsifier(str(graph.complete()))
@@ -223,16 +251,44 @@ class _Search:
             raise ValueError("Total heuristic estimate must be finite")
         return total
 
-    def tie_score(self, item: _Plan | Derivation, cost: int) -> float:
-        """Score a public snapshot without exposing mutable search internals."""
-        if not self.tiebreakers:
-            return 0.0
+    def state(self, item: _Plan | Derivation, cost: int) -> SearchState:
+        """Read-only scoring context, shared by primary and secondary scores."""
         if isinstance(item, Derivation):
             state = SearchState(item.query, cost, (), item.expression, item)
         else:
             state = SearchState(
                 item.query, cost, item.pending, item.expression
             )
+        state = replace(
+            state,
+            estimated_remaining_cost=(
+                self.estimate(item) if isinstance(item, _Plan) else 0.0
+            ),
+        )
+        if self.history_dependent:
+            state = replace(
+                state,
+                discovered_terms=frozenset(self.discovered_terms),
+                expansion_counts=MappingProxyType(
+                    self.expansion_counts.copy()
+                ),
+            )
+        return state
+
+    def primary_score(self, item: _Plan | Derivation, cost: int) -> float:
+        if self.priority is None:
+            return cost + (
+                self.estimate(item) if isinstance(item, _Plan) else 0.0
+            )
+        value = self.priority(self.state(item, cost))
+        if not isfinite(value):
+            raise ValueError("Priority scores must be finite")
+        return value
+
+    def tie_score(self, item: _Plan | Derivation, cost: int) -> float:
+        if not self.tiebreakers:
+            return 0.0
+        state = self.state(item, cost)
         values = [score(state) for score in self.tiebreakers]
         total = sum(values)
         if any(not isfinite(value) for value in values) or not isfinite(total):
@@ -257,11 +313,10 @@ class _Search:
         frontier: list[tuple[float, float, int, int, _Plan | Derivation]] = []
 
         def push(item: _Plan | Derivation, cost: int) -> None:
-            estimate = self.estimate(item) if isinstance(item, _Plan) else 0.0
             heappush(
                 frontier,
                 (
-                    cost + estimate,
+                    self.primary_score(item, cost),
                     self.tie_score(item, cost),
                     next(serial),
                     cost,
@@ -274,12 +329,13 @@ class _Search:
             while frontier and (
                 max_pops is None or progress.queue_pops < max_pops
             ):
+                self.refresh_scores(frontier)
                 _, _, _, cost, item = heappop(frontier)
                 progress.queue_pops += 1
                 if isinstance(item, Derivation):
                     candidates: Iterable[Derivation] = (item,)
                 elif not item.pending:
-                    if self.tiebreakers:
+                    if self.tiebreakers or self.priority is not None:
                         # Score each transport weight's actual expression before
                         # accepting a formula, rather than emitting a whole batch.
                         for derivation in item.derivations():
@@ -287,6 +343,7 @@ class _Search:
                         continue
                     candidates = item.derivations()
                 else:
+                    self.record_expansion(item)
                     for added, expanded in self.expand(
                         item, None if bound is None else bound - cost
                     ):
@@ -298,10 +355,40 @@ class _Search:
                         for formula in self.classes
                     ):
                         self.classes.append(derivation.formula)
+                        self.discovered_terms.update(
+                            _terms(derivation.expression)
+                        )
                         yield derivation
             progress.stop_reason = "pop_limit" if frontier else "exhausted"
         finally:
             progress.frontier_size = len(frontier)
+
+    def record_expansion(self, plan: _Plan) -> None:
+        query = plan.pending[0]
+        self.expansion_counts[query] = self.expansion_counts.get(query, 0) + 1
+
+    def refresh_scores(
+        self,
+        frontier: list[tuple[float, float, int, int, _Plan | Derivation]],
+    ) -> None:
+        """Refresh dynamic ordering without consuming extra queue pops."""
+        if not self.history_dependent:
+            return
+        frontier[:] = [
+            (
+                (
+                    self.primary_score(item, cost)
+                    if self.priority is not None
+                    else priority
+                ),
+                self.tie_score(item, cost),
+                serial,
+                cost,
+                item,
+            )
+            for priority, _, serial, cost, item in frontier
+        ]
+        heapify(frontier)
 
     def expand(
         self, plan: _Plan, budget: int | None

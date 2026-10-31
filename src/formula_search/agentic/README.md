@@ -278,3 +278,18 @@ Archive still performs its usual complete-DAG class checks on submissions.
 `session.pruned` (also printed by the CLI) records the move, equation, cost,
 and earlier best cost. Set `Session(..., prune_duplicates=False)` for an
 unpruned comparison. State memory, like the frontier, lasts for the Session.
+
+### Temporary API failures
+
+Fireworks requests default to a 300-second timeout and five retries (six attempts
+maximum). Timeouts, connection failures, HTTP 408/429 and HTTP 5xx are retried
+with exponential backoff (2 seconds doubling to 60 seconds), independent jitter,
+and any longer Retry-After delay. Other HTTP errors and invalid model responses
+fail immediately. Retries repeat the same decision; they do not consume search
+steps or modify the frontier. A timed-out request may still incur provider usage.
+
+Use `--api-timeout` and `--max-retries` in the CLI or comparison runner; setting
+`--max-retries 0` disables retries. Retry, recovery, and exhaustion events log to
+stderr. Experiments additionally save `retries.jsonl` with decision numbers and
+append readable events to `run.log`. Settings are included in replay manifests.
+The agentic-only Slurm fleet allows two concurrent jobs.
