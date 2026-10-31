@@ -17,6 +17,7 @@ from ..derivation import Derivation
 from ..evaluator import Archive, Task
 from ..expression import Term, render
 from ..graph import ADMG
+from .decisions import DecisionStats, EventSink, advance
 from .prompts import PromptTemplate
 
 
@@ -123,7 +124,7 @@ def _replacement(before: _Plan, after: _Plan) -> _Plan:
 
 
 class SearchSession(ABC):
-    """Common callback interface; each step is one model decision."""
+    """Common callback interface; each step applies one move or beam layer."""
 
     prompt_template: PromptTemplate
 
@@ -139,6 +140,7 @@ class SearchSession(ABC):
         self.task = task
         self.archive = Archive(task)
         self.history: list[dict[str, Any]] = []
+        self.decision_stats = DecisionStats()
         self._search = _Search(graph, costs=costs)
         self.prune_duplicates = prune_duplicates
         self.pruned: list[dict[str, Any]] = []
@@ -157,6 +159,14 @@ class SearchSession(ABC):
     @abstractmethod
     def step(self, response: str) -> dict[str, Any]:
         """Validate a model selection, then apply it."""
+
+    @abstractmethod
+    def validate(self, response: str) -> None:
+        """Reject an invalid selection without changing any search state."""
+
+    def forced_response(self) -> str | None:
+        """Return the sole valid selection, or None when a choice is needed."""
+        return None
 
     def _moves(self, plan: _Plan, cost: int) -> list[_Move]:
         moves = []
@@ -199,17 +209,28 @@ class SearchSession(ABC):
         return f"{self.task.query} = {rhs}"
 
     def run(
-        self, complete: Callable[[str], str], *, max_steps: int = 20
+        self,
+        complete: Callable[[str], str],
+        *,
+        max_steps: int = 20,
+        max_decision_retries: int = 2,
+        on_event: EventSink | None = None,
     ) -> Archive:
-        """Make at most max_steps model decisions; preserve the frontier.
+        """Apply at most max_steps moves/layers, including forced selections.
 
-        Errors propagate without a fallback choice. This is a decision cap,
-        not a wall-time or memory cap. Even a singleton option is selected
-        through the callback. No minimum-cost discovery order is promised.
+        Invalid selections and truncated responses receive bounded corrective
+        retries without advancing the search. Exhausted retries propagate;
+        no heuristic fallback chooses branches. HTTP retries are independent.
         """
         _integer(max_steps, "max_steps", 1)
+        _integer(max_decision_retries, "max_decision_retries", 0)
         for _ in range(max_steps):
             if self.exhausted:
                 break
-            self.step(complete(self.prompt()))
+            advance(
+                self,
+                complete,
+                max_decision_retries=max_decision_retries,
+                on_event=on_event,
+            )
         return self.archive

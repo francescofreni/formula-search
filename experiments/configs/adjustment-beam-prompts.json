@@ -1,0 +1,54 @@
+{
+  "name": "adjustment-beam-compact-prompts",
+  "description": "Adjustment: v2/v3/v4 beam prompts with shared parent histories, two corrective retries, and automatic forced selections. DeepSeek V4.1 Flash 1017; width 10, 50 layers, one repeat.",
+  "tasks": [
+    "adjustment"
+  ],
+  "strategies": [
+    {
+      "name": "beam-v2",
+      "method": "beam",
+      "prompt_version": "exploratory-v2",
+      "model": "accounts/fireworks/models/deepseek-v4p1-flash-1017",
+      "reasoning_effort": "low",
+      "width": 10,
+      "max_layers": 50,
+      "repeats": 1,
+      "api_timeout": 300,
+      "max_retries": 5,
+      "decision_retries": 2
+    },
+    {
+      "name": "beam-v3",
+      "method": "beam",
+      "prompt_version": "exploratory-v3",
+      "model": "accounts/fireworks/models/deepseek-v4p1-flash-1017",
+      "reasoning_effort": "low",
+      "width": 10,
+      "max_layers": 50,
+      "repeats": 1,
+      "api_timeout": 300,
+      "max_retries": 5,
+      "decision_retries": 2
+    },
+    {
+      "name": "beam-v4",
+      "method": "beam",
+      "prompt_version": "structured-v4",
+      "model": "accounts/fireworks/models/deepseek-v4p1-flash-1017",
+      "reasoning_effort": "low",
+      "width": 10,
+      "max_layers": 50,
+      "repeats": 1,
+      "api_timeout": 300,
+      "max_retries": 5,
+      "decision_retries": 2
+    }
+  ],
+  "verifier_seed": 0,
+  "slurm": {
+    "concurrency": 2,
+    "time": "7-00:00:00",
+    "memory": "8G"
+  }
+}

@@ -16,6 +16,7 @@ from .common import (
     _Move,
     _state_key,
 )
+from .prompting import beam_context
 from .prompts import PROMPT_VERSION, get_prompt
 
 
@@ -42,7 +43,7 @@ class BeamSession(SearchSession):
     retained for backtracking. No heuristic or cost bound ranks candidates.
 
     Width limits survivors, not generated options, memory, or prompt size.
-    A step is one selection call for a whole layer, not one proof expansion.
+    A step applies a whole layer; forced selections need no model call.
     """
 
     def __init__(
@@ -137,10 +138,18 @@ class BeamSession(SearchSession):
                 "selection_count": min(self.beam_width, len(self._candidates)),
                 "known_formulas": [c.formula for c in self.archive.classes],
                 "exhausted": self.exhausted,
-                "options": [self._describe(c) for c in self._candidates],
+                **beam_context([self._describe(c) for c in self._candidates]),
             },
             sort_keys=True,
         )
+
+    def validate(self, response: str) -> None:
+        self._selection(response)
+
+    def forced_response(self) -> str | None:
+        if self._candidates and len(self._candidates) <= self.beam_width:
+            return json.dumps({"keep": [c.move.id for c in self._candidates]})
+        return None
 
     def _selection(self, response: str) -> list[_Candidate]:
         action = json.loads(response)
@@ -153,7 +162,10 @@ class BeamSession(SearchSession):
         for move_id in ids:
             _integer(move_id, "candidate ID", 0)
         if len(set(ids)) != len(ids):
-            raise ValueError("keep must contain distinct IDs")
+            repeated = sorted({i for i in ids if ids.count(i) > 1})
+            raise ValueError(
+                f"keep must contain distinct IDs; repeated IDs: {repeated}"
+            )
         options = {c.move.id: c for c in self._candidates}
         if any(move_id not in options for move_id in ids):
             raise ValueError("Candidate is not offered in the current layer")

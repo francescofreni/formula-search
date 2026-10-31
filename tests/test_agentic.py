@@ -189,7 +189,9 @@ def test_truncated_model_output_leaves_search_unchanged() -> None:
     with (
         patch(
             "formula_search.agentic.fireworks.urlopen",
-            return_value=io.BytesIO(json.dumps(data).encode()),
+            side_effect=[
+                io.BytesIO(json.dumps(data).encode()) for _ in range(3)
+            ],
         ),
         pytest.raises(ValueError, match="complete decision"),
     ):

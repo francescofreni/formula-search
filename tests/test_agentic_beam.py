@@ -102,9 +102,9 @@ def test_candidates_include_successors_of_every_parent():
     session.step(json.dumps({"keep": ids}))
     next_state = json.loads(session.prompt())
     expected = {o["resulting_equation"] for o in state["options"][:2]}
-    assert {o["from_equation"] for o in next_state["options"]} == expected
+    assert {p["current_equation"] for p in next_state["parents"]} == expected
     assert next_state["selection_count"] == 2
-    assert all(len(o["branch_path"]) == 1 for o in next_state["options"])
+    assert all(len(p["branch_path"]) == 1 for p in next_state["parents"])
     assert len(next_state["options"]) > 2
     assert all(o["id"] not in ids for o in next_state["options"])
     before = session.prompt()

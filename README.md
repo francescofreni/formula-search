@@ -7,6 +7,12 @@ project plan lives in the `formula-search-docs` repository; formulas are
 written in the grammar of, and checked with,
 [`hiprof`](https://github.com/francescofreni/hiprof-eq).
 
+## Experiments
+
+Run individual searches or cross-strategy comparisons with the shared
+[experiment runner](experiments/README.md). Each run saves its settings,
+source snapshot, equations, and a readable comparison table in a fresh folder.
+
 ## ⚙️ Installation
 
 `formula-search` needs `hiprof` as developed in `hiprof-eq`. The `hiprof`

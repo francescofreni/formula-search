@@ -11,6 +11,7 @@ Example usage:
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from urllib.error import URLError
 
 from ..evaluator import Task
@@ -38,10 +39,11 @@ def main() -> None:
         "--max-steps",
         type=int,
         default=20,
-        help="Model decisions: one move for depth-first, one layer for beam",
+        help="Search steps: one move or beam layer, including forced selections",
     )
     parser.add_argument("--api-timeout", type=float, default=300)
     parser.add_argument("--max-retries", type=int, default=5)
+    parser.add_argument("--decision-retries", type=int, default=2)
     parser.add_argument("--max-tokens", type=int, default=None)
     parser.add_argument(
         "--reasoning-effort",
@@ -82,7 +84,17 @@ def main() -> None:
 
     error = None
     try:
-        session.run(choose, max_steps=args.max_steps)
+        session.run(
+            choose,
+            max_steps=args.max_steps,
+            max_decision_retries=args.decision_retries,
+            on_event=lambda e: (
+                print(json.dumps(e), file=sys.stderr)
+                if e["event"]
+                in ("decision_retry", "automatic", "incomplete_response")
+                else None
+            ),
+        )
     except (ValueError, URLError, TimeoutError) as exc:
         error = str(exc)
         print(error, file=sys.stderr)
@@ -102,6 +114,8 @@ def main() -> None:
                     else None
                 ),
                 "max_steps": args.max_steps,
+                "decision_retries_limit": args.decision_retries,
+                "decision_stats": asdict(session.decision_stats),
                 "status": status,
                 "error": error,
                 "history": session.history,

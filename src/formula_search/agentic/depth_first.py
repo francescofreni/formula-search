@@ -17,6 +17,7 @@ from .common import (
     _Move,
     _state_key,
 )
+from .prompting import DEPTH_FIRST_LAYOUT
 from .prompts import PROMPT_VERSION, get_prompt
 
 
@@ -108,6 +109,7 @@ class DepthFirstSession(SearchSession):
         return json.dumps(
             {
                 "strategy": "depth-first",
+                "prompt_layout": DEPTH_FIRST_LAYOUT,
                 **self.prompt_template.metadata,
                 "instructions": self.prompt_template.instructions,
                 "graph": self.task.graph,
@@ -138,8 +140,8 @@ class DepthFirstSession(SearchSession):
             sort_keys=True,
         )
 
-    def step(self, response: str) -> dict[str, Any]:
-        """Apply exactly one offered move. Invalid output leaves state intact."""
+    def _selection(self, response: str) -> _Move:
+        """Validate without applying anything."""
         if self.exhausted:
             raise ValueError("Search is exhausted")
         action = json.loads(response)
@@ -151,6 +153,21 @@ class DepthFirstSession(SearchSession):
         move = next((m for m in options if m.id == move_id), None)
         if move is None:
             raise ValueError("Move is not offered at the current node")
+        return move
+
+    def validate(self, response: str) -> None:
+        self._selection(response)
+
+    def forced_response(self) -> str | None:
+        if self._stack and len(self._stack[-1].moves) == 1:
+            return json.dumps({"move": self._stack[-1].moves[0].id})
+        return None
+
+    def step(self, response: str) -> dict[str, Any]:
+        """Apply exactly one offered move. Invalid output leaves state intact."""
+        move = self._selection(response)
+        frame = self._stack[-1]
+        options = frame.moves
         record: dict[str, Any] = {
             "move": move.id,
             "cost": move.cost,

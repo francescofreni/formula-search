@@ -16,6 +16,14 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
+class IncompleteResponse(ValueError):
+    """Provider returned no complete answer; distinguish response truncation."""
+
+    def __init__(self, message: str, finish_reason: str | None) -> None:
+        super().__init__(message)
+        self.finish_reason = finish_reason
+
+
 class Fireworks:
     """Choose an offered move with schema-constrained JSON output.
 
@@ -140,9 +148,10 @@ class Fireworks:
                 if reason == "length"
                 else ""
             )
-            raise ValueError(
+            raise IncompleteResponse(
                 "Fireworks did not return a complete decision or text "
-                f"response ({detail}).{hint}"
+                f"response ({detail}).{hint}",
+                reason,
             )
         return text
 

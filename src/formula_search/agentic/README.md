@@ -17,8 +17,7 @@ partial proof; chain-rule moves require solving all premises.
 
 For width `k`, each model call returns `{"keep": [ID, ...]}` with exactly
 `min(k, number_of_candidates)` distinct offered IDs. The model chooses the
-survivors; its list order does not change deterministic enumeration. Even
-when all candidates fit, selection still goes through the model. Invalid
+survivors; its list order does not change deterministic enumeration. When all candidates fit, `run` retains them without a model call. Invalid
 selections leave the frontier and archive unchanged.
 
 Each layer applies one legal move per retained parent, generating all its
@@ -35,8 +34,9 @@ an equal or lower cost. Rejected candidates are not marked visited, so another
 route can rediscover them. This is conservative structural pruning; final
 formula classes still use the archive's complete-DAG equivalence checks.
 
-`max_steps` means model calls: one move for depth-first, one whole layer for
-beam. Equal decision counts are not equal expansion budgets. Width caps
+`max_steps` counts applied moves for depth-first and whole layers for beam,
+including forced selections. Corrective retries do not consume extra steps.
+Equal step counts are not equal expansion budgets. Width caps
 survivors, not candidate count, prompt length, memory or elapsed time. Beam
 search is incomplete: `exhausted` means its retained frontier is empty, not
 that every possible formula was explored. Both strategies keep state in
@@ -67,9 +67,9 @@ session = BeamSession(task, beam_width=3)
 archive = session.run(Fireworks(), max_steps=20)
 ```
 
-The comparison runner uses a nominal 100-action budget: depth-first gets 100
-calls; beam gets `100 // beam_width` calls. This accounting belongs to the
-experiment runner; the session's `max_steps` API still counts model calls.
+Experiment definitions set `max_steps` for depth-first and `max_layers` for
+beam independently. Both include automatic selections. Compare actual model
+calls, retries, expansions, and discoveries alongside these limits.
 
 ## Engineering layout
 
@@ -78,6 +78,9 @@ experiment runner; the session's `max_steps` API still counts model calls.
 - `depth_first.py`: stack traversal and automatic backtracking.
 - `beam.py`: frontier expansion, layer deduplication, selection and discard.
 - `fireworks.py`: HTTP transport and decision schemas for either strategy.
+- `decisions.py`: validates choices before applying them, bounded corrective
+  retries, and automatic forced selections; shared by Python, CLI, and experiments.
+- `prompting.py`: lossless grouping of beam options by parent history.
 - `__main__.py`: CLI configuration and result reporting.
 - `loop.py`: compatibility import for the old `Session` path.
 
@@ -124,11 +127,13 @@ for known in archive.classes:
     print(known.formula)
 ```
 
-Each step makes one API request (no automatic retries). The adapter requests
-temperature zero, but provider outputs are not guaranteed reproducible. Legal
-move enumeration and execution are deterministic for the same decisions.
-Model errors, truncated output, or invalid move IDs raise exceptions, with no
-fallback branch selection. Invalid decisions leave the frontier unchanged.
+A step applies one move. Forced moves need no API call; other moves allow
+one response attempt plus two corrective retries by default, with HTTP
+retries handled separately. The adapter requests temperature zero, but
+provider outputs are not guaranteed reproducible. Legal move enumeration
+and execution are deterministic for the same decisions. Unrecoverable
+errors raise exceptions, with no fallback branch selection. Invalid
+decisions leave the frontier unchanged.
 Model calls send the graph, target, active branch path, current equation,
 legal next equations, recorded costs, and known formulas to Fireworks; keys are only used in the authorization header.
 
@@ -163,7 +168,7 @@ not independently selectable in this version. This inherits the engine's
 search-space limitations; it does not resolve missing inference moves.
 
 Final weight variants are enumerated deterministically from complete plans.
-Generating options can be expensive. `max_steps` caps model decisions, not
+Generating options can be expensive. `max_steps` caps applied moves/layers (including forced selections), not
 memory, wall time, or option count. Search state and history are in memory;
 there is no disk checkpointing. Histories/prompts grow with the search.
 
@@ -199,8 +204,10 @@ If Fireworks cannot produce a complete answer, the error reports its finish
 reason, completion-token usage, and content length without printing reasoning
 or credentials. A `length` finish means the output budget was exhausted. For models that
 support it, `--reasoning-effort none` disables thinking; raising the budget
-alone may just produce more reasoning without a decision. There
-are no automatic paid retries and incomplete responses never select a move.
+alone may just produce more reasoning without a decision. The decision layer retries truncated responses and invalid selections up to
+two times with corrective feedback, without changing the search state.
+Set `--decision-retries 0` to disable this recovery. Incomplete responses
+never select a move. Model settings and output-token limits stay unchanged.
 The search CLI prints its partial history and formulas with status `error`
 and exits nonzero. This report is not a resumable disk checkpoint; Python
 callers can retry `run` on the same Session because the frontier is intact.
@@ -221,13 +228,9 @@ https://docs.fireworks.ai/tools-sdks/nim-compatibility .
 
 ## Shared discovery objective
 
-Both strategies receive the same objective, defined once in `common.py`:
-
-> Your goal is to discover as many distinct valid identifying formulas as
-> possible. Use the known formulas to avoid repeatedly pursuing the same
-> result. Favor promising unexplored derivation routes, while completing
-> proofs so their formulas can be verified. Choose only from the offered
-> legal moves.
+`prompts.py` selects frozen instructions from `prompt_history/`. Both
+strategies aim to discover distinct valid identifying formulas, use known
+formulas to avoid repetition, and finish proofs for verification.
 
 Strategy-specific instructions then specify one move for depth-first or a
 fixed-width selection for beam. Previously saved prompts remain the record
@@ -250,7 +253,30 @@ These are proof templates, not observational formulas ready for verification.
 Submit options show the exact final rendered formula.
 
 Beam prompts show the target, graph, width, layer, known formulas, and every
-candidate with its parent equation, branch path, rule and resulting equation.
+candidate's rule and resulting equation. `parents` stores each starting equation
+and full `branch_path` once. Each option's `parent_id` references that context.
+The model selects **option IDs**, not parent IDs. No history or candidate is
+removed. `prompt_layout: beam-parents-v1` records this presentation separately
+from the frozen instruction version/hash; v1–v4 instruction text is unchanged.
+
+When all candidates fit in the beam, `run` retains them all without a model
+request. Depth-first similarly applies a sole remaining option automatically.
+These still consume one move/layer from `max_steps`; they are logged as
+`automatic` events. `step(response)` remains a strict, single-application API.
+
+`run(..., max_decision_retries=2, on_event=callback)` retries invalid selections
+or Fireworks `length` responses with specific feedback, at most three attempts
+per non-forced step. Failed attempts leave the frontier unchanged and do not
+consume search steps. Only the latest correction is included, rather than a
+growing failed-response conversation. Validation is separate from application:
+proof-verification errors are never retried as if they were model errors.
+No fallback fills missing slots or chooses a different branch. All three
+prompt versions get the same recovery policy.
+
+`session.decision_stats` reports `model_calls` (including corrective attempts),
+`decision_retries`, and `automatic_steps`. HTTP retries are additional provider
+attempts, recorded separately. Experiments save all request prompts, replies,
+corrections, automatic selections, and applied steps in `decisions.jsonl`.
 
 Backtracking in depth-first search restores the active branch's path. Completed or abandoned
 branches do not appear in that path. The full audit log remains available
@@ -284,8 +310,8 @@ unpruned comparison. State memory, like the frontier, lasts for the Session.
 Fireworks requests default to a 300-second timeout and five retries (six attempts
 maximum). Timeouts, connection failures, HTTP 408/429 and HTTP 5xx are retried
 with exponential backoff (2 seconds doubling to 60 seconds), independent jitter,
-and any longer Retry-After delay. Other HTTP errors and invalid model responses
-fail immediately. Retries repeat the same decision; they do not consume search
+and any longer Retry-After delay. Other HTTP errors fail immediately. Invalid selections and length-truncated
+responses are handled separately by the decision layer. Retries repeat the same decision; they do not consume search
 steps or modify the frontier. A timed-out request may still incur provider usage.
 
 Use `--api-timeout` and `--max-retries` in the CLI or comparison runner; setting
