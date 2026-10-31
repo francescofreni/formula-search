@@ -9,9 +9,11 @@ judges every formula proposed for it, with checks that run cheapest first:
 3. it joins the class of a formula already archived if HiProF accepts the
    two as equal on the complete DAG over the same variables, whose model
    imposes no constraint, so that formulas of different classes are
-   different functions of the observed law;
+   different functions of the observed law; only the classes with its
+   fingerprint (:mod:`~formula_search.fingerprints`) are checked, and an
+   identical formula needs no check;
 4. the first formula of a new class records the single edges whose addition
-   to the graph breaks it.
+   to the graph breaks it, and its :func:`features`.
 
 A rejection by HiProF is exact, as it exhibits a model on which the two sides
 differ; an acceptance is relative to its linear Gaussian models and wrong
@@ -19,22 +21,39 @@ with probability at most 1e-14 per check, so a union bound over the
 ``checks`` of an archive bounds its false acceptances. A formula submitted
 with a :class:`~formula_search.derivation.Derivation` that derives it is
 derivation-certified, and any other valid formula verification-supported.
+:meth:`Archive.save` writes the classes and every verdict as JSON.
 """
 
 from __future__ import annotations
 
+import json
 import re
+from collections import defaultdict
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
+from fractions import Fraction
 from itertools import combinations, permutations
-from typing import Literal, NamedTuple
+from pathlib import Path
+from typing import Literal, NamedTuple, TypeAlias
 
 from hiprof import CheckResult, HPFalsifier
 from hiprof.formula import parse_and_validate
+from hiprof.formula.formula import (
+    BaseKernel,
+    BaseQuotient,
+    Formula,
+    InternalConditionalDivision,
+    Marginalisation,
+    Product,
+)
+from hiprof.formula.parser import parse
 
 from .derivation import Derivation
 from .docalculus import Query
+from .fingerprints import Fingerprint, FixedModel
 from .graph import ADMG
+
+Source: TypeAlias = str | Derivation | None
 
 
 class Task(NamedTuple):
@@ -54,18 +73,42 @@ class Task(NamedTuple):
 
 
 @dataclass(frozen=True)
+class Features:
+    """Features of a formula, as written, that bear on its estimation.
+
+    :param kernels: The number of base terms ``p(A | B)``, two for each
+        quotient of base terms.
+    :param summed: The variables summed out, in the order written.
+    :param largest_conditioning_set: The largest number of inputs ``B`` of a
+        base term.
+    :param quotient: Whether the formula has a quotient of base terms.
+    :param icd: Whether it has an internal conditional division.
+    """
+
+    kernels: int
+    summed: tuple[str, ...]
+    largest_conditioning_set: int
+    quotient: bool
+    icd: bool
+
+
+@dataclass(frozen=True)
 class FormulaClass:
     """Valid formulas that are one function of the observed law.
 
     :param formula: The first formula found in the class.
+    :param source: How that formula was found.
     :param evidence: HiProF's acceptance of the formula in the task's graph.
     :param broken_by: The edges whose addition to the graph makes the
         formula invalid.
+    :param features: The features of the formula.
     """
 
     formula: str
+    source: Source
     evidence: CheckResult
     broken_by: frozenset[str]
+    features: Features
 
 
 @dataclass(frozen=True)
@@ -83,7 +126,7 @@ class Verdict:
     """
 
     formula: str
-    source: object
+    source: Source
     outcome: Literal["malformed", "falsified", "duplicate", "new"]
     class_index: int | None = None
     reason: str = ""
@@ -108,8 +151,10 @@ class Archive:
         self.log: list[Verdict] = []
         self.checks = 0
         self._graph = ADMG.parse(task.graph)
+        self._model = FixedModel(self._graph.nodes)
+        self._groups: defaultdict[Fingerprint, list[int]] = defaultdict(list)
 
-    def submit(self, formula: str, source: object = None) -> Verdict:
+    def submit(self, formula: str, source: Source = None) -> Verdict:
         """Judge a formula proposed for the task, and log the verdict.
 
         :raises ValueError: If ``source`` is a derivation that does not
@@ -124,7 +169,21 @@ class Archive:
         self.log.append(verdict)
         return verdict
 
-    def _judge(self, formula: str, source: object) -> Verdict:
+    def save(self, path: str | Path) -> None:
+        """Write the task, the checks, the classes, and the log as JSON.
+
+        Fields left at their default are omitted, sets are written as sorted
+        lists, queries in hiprof's syntax, and bounds as floats.
+        """
+        archive = {
+            "task": self.task._asdict(),
+            "checks": self.checks,
+            "classes": self.classes,
+            "log": self.log,
+        }
+        Path(path).write_text(json.dumps(_json(archive), indent=2) + "\n")
+
+    def _judge(self, formula: str, source: Source) -> Verdict:
         task = self.task
         try:
             signature = parse_and_validate(formula).signature
@@ -142,9 +201,13 @@ class Archive:
         if not evidence:
             return Verdict(formula, source, "falsified")
 
+        group = self._groups[
+            self._model.fingerprint(formula, {task.outcome}, {task.treatment})
+        ]
         complete = str(self._graph.complete())
-        for index, known in enumerate(self.classes):
-            if self._check(complete, known.formula, formula):
+        for index in group:
+            known = self.classes[index].formula
+            if known == formula or self._check(complete, known, formula):
                 return Verdict(formula, source, "duplicate", index)
 
         broken_by = frozenset(
@@ -152,7 +215,12 @@ class Archive:
             for edge in self._additions()
             if not self._check(f"{task.graph}; {edge}", task.target, formula)
         )
-        self.classes.append(FormulaClass(formula, evidence, broken_by))
+        group.append(len(self.classes))
+        self.classes.append(
+            FormulaClass(
+                formula, source, evidence, broken_by, features(formula)
+            )
+        )
         return Verdict(formula, source, "new", len(self.classes) - 1)
 
     def _check(self, graph: str, lhs: str, rhs: str) -> CheckResult:
@@ -169,3 +237,66 @@ class Archive:
         for first, second in combinations(sorted(graph.nodes), 2):
             if frozenset({first, second}) not in graph.bidirected:
                 yield f"{first} <-> {second}"
+
+
+def features(formula: str) -> Features:
+    """Return the features of a formula, as it is written.
+
+    :raises ValueError: If the formula does not parse.
+    """
+    nodes = list(_nodes(parse(formula)))
+    terms = [node for node in nodes if isinstance(node, BaseKernel)]
+    return Features(
+        kernels=len(terms),
+        summed=tuple(
+            str(variable)
+            for node in nodes
+            if isinstance(node, Marginalisation)
+            for variable in node.variables
+        ),
+        largest_conditioning_set=max(len(term.inputs) for term in terms),
+        quotient=any(isinstance(node, BaseQuotient) for node in nodes),
+        icd=any(
+            isinstance(node, InternalConditionalDivision) for node in nodes
+        ),
+    )
+
+
+def _nodes(formula: Formula) -> Iterator[Formula]:
+    """Yield the nodes of a formula's syntax tree, parents first."""
+    yield formula
+    if isinstance(formula, Product):
+        children: tuple[Formula, ...] = formula.factors
+    elif isinstance(formula, BaseQuotient):
+        children = (formula.numerator, formula.denominator)
+    elif isinstance(formula, Marginalisation | InternalConditionalDivision):
+        children = (formula.body,)
+    else:
+        children = ()
+    for child in children:
+        yield from _nodes(child)
+
+
+def _json(value: object) -> object:
+    """Convert records into JSON values.
+
+    A dataclass becomes its fields that differ from their default, a query
+    its hiprof syntax, a set a sorted list, and a fraction a float.
+    """
+    if isinstance(value, Query):
+        return str(value)
+    if is_dataclass(value):
+        return {
+            field.name: _json(getattr(value, field.name))
+            for field in fields(value)
+            if getattr(value, field.name) != field.default
+        }
+    if isinstance(value, dict):
+        return {key: _json(item) for key, item in value.items()}
+    if isinstance(value, frozenset):
+        return sorted(value)
+    if isinstance(value, list | tuple):
+        return [_json(item) for item in value]
+    if isinstance(value, Fraction):
+        return float(value)
+    return value

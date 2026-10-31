@@ -20,7 +20,8 @@ The expressions derived are infinitely many (Yvernes et al., Section 6), but
 the queries are finitely many. The search derives every query breadth-first
 in total probability-rule cost, and keeps one derivation per class of
 each query: two expressions are in one class if HiProF finds them equal on
-the complete DAG, as in the evaluator. This loses no class of the target,
+the complete DAG, as in the evaluator, which checks only expressions with the
+same :mod:`~formula_search.fingerprints`. This loses no class of the target,
 since expressions of one class combine into expressions of one class.
 """
 
@@ -39,6 +40,7 @@ from hiprof import HPFalsifier
 from .baselines.id import parse_query
 from .docalculus import Query, equivalent_queries, neighbours
 from .expression import Expression, Term, condition, marginal, product, render
+from .fingerprints import Fingerprint, FixedModel
 from .graph import ADMG
 
 Rule = Literal[
@@ -211,10 +213,13 @@ class _Search:
         self.costs = _rule_costs(costs)
         self.graph = graph
         self.complete = HPFalsifier(str(graph.complete()))
+        self.model = FixedModel(graph.nodes)
         self.layers: dict[tuple[Query, int], list[Derivation]] = {}
         self.direct_steps: dict[tuple[Query, int], list[Derivation]] = {}
         self.components: dict[Query, dict[Query, tuple[Query, ...]]] = {}
-        self.classes: dict[Query, list[str]] = defaultdict(list)
+        self.classes: dict[Query, dict[Fingerprint, list[str]]] = defaultdict(
+            dict
+        )
 
     def layer(self, query: Query, cost: int) -> list[Derivation]:
         """Return derivations of ``query`` with total rule cost ``cost``.
@@ -263,13 +268,16 @@ class _Search:
 
     def _new_class(self, derivation: Derivation) -> bool:
         """Record the class of a derivation, and return whether it is new."""
-        classes = self.classes[derivation.query]
-        if any(
-            self.complete.check(formula, derivation.formula)
-            for formula in classes
+        query, formula = derivation.query, derivation.formula
+        fingerprint = self.model.fingerprint(
+            formula, query.outcomes, query.inputs
+        )
+        group = self.classes[query].setdefault(fingerprint, [])
+        if formula in group or any(
+            self.complete.check(known, formula) for known in group
         ):
             return False
-        classes.append(derivation.formula)
+        group.append(formula)
         return True
 
 

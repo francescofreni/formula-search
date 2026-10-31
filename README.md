@@ -90,9 +90,10 @@ template_formulas("T -> M; M -> Y; T <-> Y", "T", "Y")
 An `Archive` keeps the distinct valid formulas for a task, one per class.
 It checks with HiProF that each formula submitted identifies the target, and
 whether it is a function of the observed law already archived, by checking
-it against each class on the complete DAG, whose model imposes no
-constraint. A new class records the single edges whose addition to the
-graph breaks it:
+it on the complete DAG, whose model imposes no constraint, against the
+classes with the same fingerprint: its value on a fixed model of that DAG.
+A new class records the single edges whose addition to the graph breaks it,
+how its formula was found, and the formula's features:
 
 ```python
 from formula_search.evaluator import Archive, Task
@@ -106,9 +107,17 @@ for formula, source in template_formulas(*task).items():
 # [('sum_{Z1} { p(Z1) p(Y | T, Z1) }', ['T <-> Y', 'T <-> Z2', 'Z2 -> T']),
 #  ('sum_{Z1, Z2} { p(Z1, Z2) p(Y | T, Z1, Z2) }', ['T -> Z2', 'T <-> Y'])]
 
+archive.classes[0].source
+# 'adjustment: S = {Z1}'
+archive.classes[0].features
+# Features(kernels=2, summed=('Z1',), largest_conditioning_set=2, quotient=False, icd=False)
+
 archive.submit("p(Y | T)").outcome
 # 'falsified'
 ```
+
+`archive.save(path)` writes the task, the number of HiProF checks, the
+classes, and the verdict on every formula submitted, as JSON.
 
 `suite.CURATED` holds the curated tasks of the plan, and
 `suite.random_tasks` draws random ones from a seed.
@@ -246,6 +255,7 @@ src/formula_search/
 ├── graph.py                     acyclic directed mixed graphs
 ├── docalculus.py                rules 2 and 3 of do-calculus
 ├── expression.py                kernel expressions in hiprof's grammar
+├── fingerprints.py              values of formulas on a fixed model
 ├── evaluator.py                 archives of distinct valid formulas
 ├── suite.py                     curated and random tasks
 ├── derivation.py                derivation search

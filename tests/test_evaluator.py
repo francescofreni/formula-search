@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from formula_search.derivation import derive
-from formula_search.evaluator import Archive, Task
+from formula_search.evaluator import Archive, Features, Task, features
 from formula_search.suite import CURATED
 
 FRONT_DOOR = "sum_{M} { p(M | T) sum_{T'} { p(Y | M, T') p(T') } }"
+NAPKIN = "sum_{Z} { icd_{X | Z} { sum_{W} { p(Y, X | Z, W) p(W) } } p(Z) }"
 
 
 def test_submit_accepts_identifying_formulas_and_falsifies_others() -> None:
@@ -27,6 +31,25 @@ def test_rewrites_of_a_formula_are_duplicates() -> None:
     verdict = archive.submit(quotient, source="rewrite")
 
     assert (verdict.outcome, verdict.class_index) == ("duplicate", 0)
+
+
+def test_a_duplicate_is_checked_against_its_own_class_only() -> None:
+    archive = Archive(CURATED["two adjustment sets"])
+    for formula in [
+        "sum_{Z1} { p(Z1) p(Y | T, Z1) }",
+        "sum_{Z1, Z2} { p(Z1) p(Z2) p(Y | T, Z1, Z2) }",
+        "sum_{Z1, Z2} { p(Z1, Z2) p(Y | T, Z1, Z2) }",
+    ]:
+        archive.submit(formula)
+    checks = archive.checks
+
+    verdict = archive.submit(
+        "sum_{Z1, Z2} { p(Z1) p(Z2 | Z1) p(Y | T, Z1, Z2) }"
+    )
+
+    assert (verdict.outcome, verdict.class_index) == ("duplicate", 2)
+    # One check of validity, and one against the class of its fingerprint.
+    assert archive.checks == checks + 2
 
 
 def test_adjustment_sets_fall_in_classes_with_their_assumptions() -> None:
@@ -73,6 +96,67 @@ def test_formulas_submitted_with_their_derivation_are_certified() -> None:
 
 
 @pytest.mark.parametrize(
+    ("formula", "expected"),
+    [
+        pytest.param(
+            FRONT_DOOR,
+            Features(3, ("M", "T'"), 2, quotient=False, icd=False),
+            id="front-door",
+        ),
+        pytest.param(
+            FRONT_DOOR.replace("p(M | T)", "(p(M, T) / p(T))"),
+            Features(4, ("M", "T'"), 2, quotient=True, icd=False),
+            id="quotient",
+        ),
+        pytest.param(
+            NAPKIN,
+            Features(3, ("Z", "W"), 2, quotient=False, icd=True),
+            id="napkin",
+        ),
+    ],
+)
+def test_features_describe_the_formula_as_written(
+    formula: str,
+    expected: Features,
+) -> None:
+    assert features(formula) == expected
+
+
+def test_save_writes_the_classes_and_every_verdict(tmp_path: Path) -> None:
+    task = CURATED["front-door"]
+    archive = Archive(task)
+    (derivation,) = derive(*task, bound=4)
+    archive.submit(derivation.formula, derivation)
+    archive.submit("p(Y | T)", "adjustment: S = {}")
+    archive.submit("p(Y | T", "a typo")
+
+    archive.save(tmp_path / "front-door.json")
+    saved = json.loads((tmp_path / "front-door.json").read_text())
+
+    assert saved["task"] == {
+        "graph": task.graph,
+        "treatment": "T",
+        "outcome": "Y",
+    }
+    assert saved["checks"] == archive.checks
+    (record,) = saved["classes"]
+    assert record["formula"] == derivation.formula
+    assert record["evidence"]["false_acceptance_bound"] < 1e-14
+    assert record["broken_by"] == ["M <-> T", "M <-> Y", "T -> Y"]
+    assert record["features"]["summed"] == ["M", "T'"]
+    # The derivation is a tree of rules over queries in hiprof's syntax.
+    assert record["source"]["query"] == "p(Y | do(T))"
+    assert record["source"]["rule"] == "marginalization"
+    assert [entry["outcome"] for entry in saved["log"]] == [
+        "new",
+        "falsified",
+        "malformed",
+    ]
+    assert "class_index" not in saved["log"][1]
+    assert "Invalid formula syntax" in saved["log"][2]["reason"]
+
+
+@pytest.mark.parametrize(
     ("task", "formula", "valid"),
     [
         # hiprof-eq/examples/cross_graph_verification.py
@@ -107,12 +191,7 @@ def test_formulas_submitted_with_their_derivation_are_certified() -> None:
             id="front-door, second graph",
         ),
         # hiprof-eq/examples/napkin.py
-        pytest.param(
-            CURATED["napkin"],
-            "sum_{Z} { icd_{X | Z} { sum_{W} { p(Y, X | Z, W) p(W) } } p(Z) }",
-            True,
-            id="napkin",
-        ),
+        pytest.param(CURATED["napkin"], NAPKIN, True, id="napkin"),
         pytest.param(
             CURATED["napkin"], "p(Y | X)", False, id="napkin, p(Y|X)"
         ),
