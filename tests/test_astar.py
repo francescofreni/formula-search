@@ -391,3 +391,79 @@ def test_admissible_inconsistent_heuristic_preserves_minimum_costs(
     )
     assert len(first) == 1
     assert proof_cost(first[0], {}) == 3
+
+
+@pytest.mark.parametrize("tiebreaker", [None, expression_size()])
+def test_pop_budget_counts_actual_heap_removals(monkeypatch, tiebreaker):
+    import formula_search.astar as module
+
+    original = module.heappop
+    actual = 0
+
+    def pop(queue):
+        nonlocal actual
+        actual += 1
+        return original(queue)
+
+    monkeypatch.setattr(module, "heappop", pop)
+    stats = module.SearchStats()
+    proofs = derive(
+        "Z -> X; X -> Y",
+        "X",
+        "Y",
+        bound=None,
+        max_pops=100,
+        stats=stats,
+        tiebreaker=tiebreaker,
+    )
+    assert actual == stats.queue_pops == 100
+    assert stats.stop_reason == "pop_limit"
+    assert stats.frontier_size > 0
+    assert proofs
+    assert all(p.verify(ADMG.parse("Z -> X; X -> Y")) for p in proofs)
+
+
+def test_pop_budget_preserves_discoveries_and_old_bounded_behavior():
+    from formula_search.astar import SearchStats
+
+    task = Task("X -> Y", "X", "Y")
+    stats = SearchStats()
+    assert derive(*task, bound=None, max_pops=1, stats=stats) == []
+    assert stats.queue_pops == 1 and stats.stop_reason == "pop_limit"
+    proofs = derive(*task, bound=None, max_pops=2, stats=stats)
+    assert [p.formula for p in proofs] == ["p(Y | X)"]
+    assert stats.queue_pops == 2
+    assert stats.stop_reason == "pop_limit"
+    assert derive(*task, bound=0) == proofs
+    assert derive(*task, bound=0, max_pops=100, stats=stats) == proofs
+    assert stats.stop_reason == "exhausted"
+    assert stats.queue_pops == 2
+
+
+@pytest.mark.parametrize("cap", [0, -1, True, 1.5])
+def test_invalid_pop_budget(cap):
+    with pytest.raises(ValueError, match="max_pops"):
+        derive("X -> Y", "X", "Y", bound=None, max_pops=cap)
+
+
+def test_unbounded_cost_requires_work_budget():
+    with pytest.raises(ValueError, match="requires max_pops"):
+        derive("X -> Y", "X", "Y", bound=None)
+
+
+def test_class_limit_has_distinct_stop_reason():
+    from formula_search.astar import SearchStats
+
+    stats = SearchStats()
+    result = derive(
+        "Z -> X; X -> Y",
+        "X",
+        "Y",
+        bound=None,
+        max_pops=100,
+        limit=1,
+        stats=stats,
+    )
+    assert len(result) == 1
+    assert stats.stop_reason == "class_limit"
+    assert stats.queue_pops < 100

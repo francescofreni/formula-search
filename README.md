@@ -7,6 +7,12 @@ project plan lives in the `formula-search-docs` repository; formulas are
 written in the grammar of, and checked with,
 [`hiprof`](https://github.com/francescofreni/hiprof-eq).
 
+## Experiments
+
+Run individual searches or cross-strategy comparisons with the shared
+[experiment runner](experiments/README.md). Each run saves its settings,
+source snapshot, equations, and a readable comparison table in a fresh folder.
+
 ## ⚙️ Installation
 
 `formula-search` needs `hiprof` as developed in `hiprof-eq`. The `hiprof`
@@ -208,6 +214,45 @@ completed `derivation`. Unfinished expressions use kernel placeholders and
 provisional transport weights; they estimate size and are not formulas.
 Completed candidates use their actual simplified expressions. Tie-breaking
 guides discovery; it does not guarantee globally smallest formulas.
+
+Two optional discovery-oriented tiebreakers use the current search's history:
+
+```python
+from formula_search.astar import derive
+from formula_search.heuristics import new_terms, less_explored
+
+proofs = derive(
+    "Z -> X; Z -> Y; X -> M; M -> Y", "X", "Y",
+    bound=None, max_pops=200,
+    tiebreaker=[new_terms(), less_explored()],
+)
+```
+
+- `new_terms()` favors the fraction of distinct probability terms absent from
+  formulas already discovered by this A* run. It does not reward simply
+  repeating terms or making the expression longer.
+- `less_explored()` favors a next unresolved query expanded fewer times
+  so far. Completed candidates score zero.
+
+Use either alone, combine them as above, or adjust their `weight=` values.
+They only break equal A* priorities; they are not remaining-cost heuristics
+and do not promise new formula classes. Partial expressions contain provisional
+terms, so novelty is only a hint. HiProF still decides formula-class equality.
+
+The engine refreshes history-dependent queue scores before each pop, retaining
+stable insertion order for ties. This adds work proportional to frontier size,
+but no extra pops. Ordinary tiebreakers retain their existing queue behavior.
+History is local to each search, so scorer objects can be reused across runs.
+`SearchState.discovered_terms` and `expansion_counts` are read-only snapshots
+provided to these scorers; no external archive or provider is needed.
+
+For controlled best-first experiments, `derive(..., priority=score)` replaces
+`g+h` with a finite score of the same `SearchState`. The snapshot includes
+`estimated_remaining_cost`, so custom scores can combine cost, lookahead and
+novelty explicitly. Lower primary score wins; tiebreakers and insertion order
+follow. Custom priorities refresh before each pop and **do not promise minimum
+proof cost**. Leaving `priority=None` retains ordinary A* behavior. The CPU-only
+fleet in `experiments/tree_search/astar/FLEET.md` compares these alternatives.
 
 ## 🗂️ Layout
 

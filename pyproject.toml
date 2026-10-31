@@ -63,7 +63,7 @@ no_implicit_optional = true
 disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "experiments/tests"]
 
 [tool.ruff]
 line-length = 79
