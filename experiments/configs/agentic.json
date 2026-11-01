@@ -1,0 +1,23 @@
+{
+  "name": "agentic-comparison",
+  "description": "Depth-first and beam on four graphs; three repeats each.",
+  "tasks": [
+    "adjustment",
+    "mediation",
+    "front-door",
+    "napkin"
+  ],
+  "strategies": [
+    {
+      "method": "depth-first",
+      "max_steps": 200,
+      "prompt_version": "structured-v4"
+    },
+    {
+      "method": "beam",
+      "width": 10,
+      "max_layers": 50,
+      "prompt_version": "structured-v4"
+    }
+  ]
+}

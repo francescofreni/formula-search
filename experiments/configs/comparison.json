@@ -1,0 +1,32 @@
+{
+  "name": "four-strategy-comparison",
+  "description": "Four graphs and four methods. Budgets are explicit, not equal compute.",
+  "tasks": [
+    "adjustment",
+    "mediation",
+    "front-door",
+    "napkin"
+  ],
+  "strategies": [
+    {
+      "method": "derivation",
+      "bound": 4
+    },
+    {
+      "method": "astar",
+      "profile": "diverse_ties",
+      "max_pops": 1000
+    },
+    {
+      "method": "depth-first",
+      "max_steps": 200,
+      "prompt_version": "structured-v4"
+    },
+    {
+      "method": "beam",
+      "width": 10,
+      "max_layers": 50,
+      "prompt_version": "structured-v4"
+    }
+  ]
+}

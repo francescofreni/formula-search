@@ -31,8 +31,14 @@ AGENTS.md
 .vscode/
 .DS_Store
 
-# Local experiments
-/experiments/
+# Experiment infrastructure is tracked; generated and legacy files stay local.
+/experiments/*
+!/experiments/README.md
+!/experiments/run.py
+!/experiments/worker.slurm
+!/experiments/_runner/
+!/experiments/configs/
+!/experiments/tests/
 
 # Job output logs
 *.err

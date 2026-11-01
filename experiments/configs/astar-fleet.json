@@ -1,0 +1,159 @@
+{
+  "name": "astar-fleet",
+  "description": "Twelve queue orderings, four graphs, 200 and 1000 pops.",
+  "tasks": [
+    "adjustment",
+    "mediation",
+    "front-door",
+    "napkin"
+  ],
+  "strategies": [
+    {
+      "name": "uniform-200-pops",
+      "method": "astar",
+      "profile": "uniform",
+      "max_pops": 200
+    },
+    {
+      "name": "lookahead-200-pops",
+      "method": "astar",
+      "profile": "lookahead",
+      "max_pops": 200
+    },
+    {
+      "name": "concise_ties-200-pops",
+      "method": "astar",
+      "profile": "concise_ties",
+      "max_pops": 200
+    },
+    {
+      "name": "new_term_ties-200-pops",
+      "method": "astar",
+      "profile": "new_term_ties",
+      "max_pops": 200
+    },
+    {
+      "name": "exploration_ties-200-pops",
+      "method": "astar",
+      "profile": "exploration_ties",
+      "max_pops": 200
+    },
+    {
+      "name": "diverse_ties-200-pops",
+      "method": "astar",
+      "profile": "diverse_ties",
+      "max_pops": 200
+    },
+    {
+      "name": "new_terms_first-200-pops",
+      "method": "astar",
+      "profile": "new_terms_first",
+      "max_pops": 200
+    },
+    {
+      "name": "exploration_first-200-pops",
+      "method": "astar",
+      "profile": "exploration_first",
+      "max_pops": 200
+    },
+    {
+      "name": "diversity_first-200-pops",
+      "method": "astar",
+      "profile": "diversity_first",
+      "max_pops": 200
+    },
+    {
+      "name": "mixed_1-200-pops",
+      "method": "astar",
+      "profile": "mixed_1",
+      "max_pops": 200
+    },
+    {
+      "name": "mixed_4-200-pops",
+      "method": "astar",
+      "profile": "mixed_4",
+      "max_pops": 200
+    },
+    {
+      "name": "finish_first-200-pops",
+      "method": "astar",
+      "profile": "finish_first",
+      "max_pops": 200
+    },
+    {
+      "name": "uniform-1000-pops",
+      "method": "astar",
+      "profile": "uniform",
+      "max_pops": 1000
+    },
+    {
+      "name": "lookahead-1000-pops",
+      "method": "astar",
+      "profile": "lookahead",
+      "max_pops": 1000
+    },
+    {
+      "name": "concise_ties-1000-pops",
+      "method": "astar",
+      "profile": "concise_ties",
+      "max_pops": 1000
+    },
+    {
+      "name": "new_term_ties-1000-pops",
+      "method": "astar",
+      "profile": "new_term_ties",
+      "max_pops": 1000
+    },
+    {
+      "name": "exploration_ties-1000-pops",
+      "method": "astar",
+      "profile": "exploration_ties",
+      "max_pops": 1000
+    },
+    {
+      "name": "diverse_ties-1000-pops",
+      "method": "astar",
+      "profile": "diverse_ties",
+      "max_pops": 1000
+    },
+    {
+      "name": "new_terms_first-1000-pops",
+      "method": "astar",
+      "profile": "new_terms_first",
+      "max_pops": 1000
+    },
+    {
+      "name": "exploration_first-1000-pops",
+      "method": "astar",
+      "profile": "exploration_first",
+      "max_pops": 1000
+    },
+    {
+      "name": "diversity_first-1000-pops",
+      "method": "astar",
+      "profile": "diversity_first",
+      "max_pops": 1000
+    },
+    {
+      "name": "mixed_1-1000-pops",
+      "method": "astar",
+      "profile": "mixed_1",
+      "max_pops": 1000
+    },
+    {
+      "name": "mixed_4-1000-pops",
+      "method": "astar",
+      "profile": "mixed_4",
+      "max_pops": 1000
+    },
+    {
+      "name": "finish_first-1000-pops",
+      "method": "astar",
+      "profile": "finish_first",
+      "max_pops": 1000
+    }
+  ],
+  "slurm": {
+    "time": "00:30:00"
+  }
+}

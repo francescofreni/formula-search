@@ -1,0 +1,17 @@
+{
+  "name": "single-astar",
+  "description": "One quick adjustment search with lookahead A*.",
+  "tasks": [
+    "adjustment"
+  ],
+  "strategies": [
+    {
+      "method": "astar",
+      "profile": "lookahead",
+      "max_pops": 200
+    }
+  ],
+  "slurm": {
+    "time": "00:30:00"
+  }
+}

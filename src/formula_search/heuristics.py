@@ -1,4 +1,4 @@
-"""Composable cost bounds and expression-size tie-breakers for A*.
+"""Composable cost bounds, expression-size and novelty tie-breakers for A*.
 
 Cost heuristics take a Query and lower-bound the remaining probability-rule
 cost, including free do-calculus moves. Their maximum remains admissible;
@@ -15,9 +15,10 @@ that the globally shortest equation is returned first.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from math import isfinite
+from types import MappingProxyType
 
 from .derivation import Derivation, _rule_costs, rules
 from .docalculus import Query, equivalent_queries
@@ -35,6 +36,9 @@ class SearchState:
     ``cost`` is committed probability-rule cost, and ``pending`` lists all
     outstanding premises. ``expression`` estimates an unfinished proof's
     size; only when ``derivation`` is present is it an actual formula.
+    For history-dependent scorers, ``discovered_terms`` contains terms from
+    classes found by this run; ``expansion_counts`` records actual expansions
+    of each next unresolved query. The engine supplies read-only snapshots.
     """
 
     query: Query
@@ -42,6 +46,11 @@ class SearchState:
     pending: tuple[Query, ...]
     expression: Expression
     derivation: Derivation | None = None
+    discovered_terms: frozenset[Term] = frozenset()
+    expansion_counts: Mapping[Query, int] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    estimated_remaining_cost: float = 0.0
 
 
 def zero(query: Query) -> float:
@@ -206,3 +215,57 @@ def conditioning_size(*, weight: float = 1) -> Tiebreaker:
         ),
         weight,
     )
+
+
+@dataclass(frozen=True)
+class _HistoryTiebreaker:
+    """Marker for scores that must refresh as search history changes."""
+
+    score: Tiebreaker
+
+    def __call__(self, state: SearchState) -> float:
+        return self.score(state)
+
+
+def _terms(expression: Expression) -> frozenset[Term]:
+    return frozenset(n for n in _nodes(expression) if isinstance(n, Term))
+
+
+def new_terms(*, weight: float = 1) -> Tiebreaker:
+    """Favor a larger fraction of terms absent from discovered classes.
+
+    Count distinct probability terms, not repeated occurrences. Using a
+    fraction avoids rewarding a formula merely for having more terms.
+    Partial expressions include provisional terms: this is a novelty hint,
+    not an equivalence test or a remaining-cost lower bound.
+    """
+    if not isfinite(weight) or weight < 0:
+        raise ValueError("Tie-breaker weights must be finite and nonnegative")
+
+    def score(state: SearchState) -> float:
+        terms = _terms(state.expression)
+        return (
+            -weight * len(terms - state.discovered_terms) / max(1, len(terms))
+        )
+
+    return _HistoryTiebreaker(score)
+
+
+def less_explored(*, weight: float = 1) -> Tiebreaker:
+    """Favor a next subproblem with fewer previous expansions.
+
+    Count actual expansions of the first pending Query, including repeated
+    appearances in different proof trees. Completed candidates score zero.
+    This discourages revisiting busy regions without pruning any proofs.
+    """
+    if not isfinite(weight) or weight < 0:
+        raise ValueError("Tie-breaker weights must be finite and nonnegative")
+
+    def score(state: SearchState) -> float:
+        return (
+            weight * state.expansion_counts.get(state.pending[0], 0)
+            if state.pending
+            else 0.0
+        )
+
+    return _HistoryTiebreaker(score)

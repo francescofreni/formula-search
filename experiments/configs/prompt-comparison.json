@@ -1,0 +1,36 @@
+{
+  "name": "prompt-comparison",
+  "description": "Original discovery versus structured exploration, with matched settings per method.",
+  "tasks": [
+    "adjustment",
+    "mediation"
+  ],
+  "strategies": [
+    {
+      "name": "depth-first-original",
+      "method": "depth-first",
+      "prompt_version": "discovery-v1",
+      "max_steps": 200
+    },
+    {
+      "name": "depth-first-structured",
+      "method": "depth-first",
+      "prompt_version": "structured-v4",
+      "max_steps": 200
+    },
+    {
+      "name": "beam-original",
+      "method": "beam",
+      "prompt_version": "discovery-v1",
+      "width": 10,
+      "max_layers": 50
+    },
+    {
+      "name": "beam-structured",
+      "method": "beam",
+      "prompt_version": "structured-v4",
+      "width": 10,
+      "max_layers": 50
+    }
+  ]
+}
