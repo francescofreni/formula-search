@@ -72,8 +72,10 @@ Select and customize a preset at the bottom of `configs.py`:
 CONFIG = replace(MEDIATION_05_NESTED_CONDITIONAL_DIVISIONS, n=100)
 ```
 
-The `Config` dataclass remains in `config.py`; the timing loop is in
-`main.py`. Both module and directory execution use the same selected preset.
+The shared graph/formula settings live in
+`formula_search.verification.VerificationConfig`. The profiling `Config` in
+`config.py` extends it with `n`; existing imports still work. The timing loop
+is in `main.py`. Both module and directory execution use the same selected preset.
 
 ## Run the whole fleet
 
