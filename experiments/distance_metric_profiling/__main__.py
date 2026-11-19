@@ -6,10 +6,10 @@ from pathlib import Path
 
 def run() -> None:
     if not __package__:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-    from distance_metric_profiling.configs import CONFIG
-    from distance_metric_profiling.main import main
+    from experiments.distance_metric_profiling.configs import CONFIG
+    from experiments.distance_metric_profiling.main import main
 
     main(CONFIG)
 

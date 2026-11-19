@@ -3,7 +3,7 @@
 Validity decreases along each chain. Binary search finds each formula's
 first invalid position, hence the size of its valid prefix. HiProF answers
 are probabilistic and restricted to linear-Gaussian models. No verdict
-cache is used; only the two base-graph checks are shared across chains.
+cache is used; only the base-graph checks are shared across chains.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ import random
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from itertools import combinations
+from math import fsum
 from time import perf_counter
 
 from hiprof import HPFalsifier
@@ -33,6 +35,8 @@ class DistanceResult:
     sampling_failure_probability: float
     verifier_failure_bound: float
     total_failure_bound: float
+    n_formulas: int = 2
+    n_pairs: int = 1
     sampling_mode: str = "explicit_edges"
     topological_permutation_attempts: int = 0
     topological_order_counts: dict[tuple[str, ...], int] = field(
@@ -48,11 +52,8 @@ def _validate_family(config: DistanceConfig) -> tuple[str, ...]:
 
 
 def _validate_formulas(config: DistanceConfig) -> None:
-    if any(
-        re.search(r"\bdo\s*\(", formula)
-        for formula in (config.formula, config.other_formula)
-    ):
-        raise ValueError("Both candidate formulas must be observational")
+    if any(re.search(r"\bdo\s*\(", formula) for formula in config.formulas):
+        raise ValueError("All candidate formulas must be observational")
 
 
 def _first_invalid(m: int, valid: Callable[[int], bool]) -> int:
@@ -82,9 +83,14 @@ def _chain_distance(
             lambda k: valid("; ".join((config.graph, *order[:k])), formula),
         )
 
-    first = boundary(config.formula)
-    second = boundary(config.other_formula)
-    return abs(first - second) / max(first, second)
+    boundaries = [boundary(formula) for formula in config.formulas]
+    return (
+        fsum(
+            abs(first - second) / max(first, second)
+            for first, second in combinations(boundaries, 2)
+        )
+        / config.n_pairs
+    )
 
 
 def _estimate(config: DistanceConfig) -> DistanceResult:
@@ -119,9 +125,11 @@ def _estimate(config: DistanceConfig) -> DistanceResult:
             )
         )
 
-    for name in ("formula", "other_formula"):
-        if not valid(config.graph, getattr(config, name)):
-            raise ValueError(f"{name} failed verification on the base graph")
+    for index, formula in enumerate(config.formulas):
+        if not valid(config.graph, formula):
+            raise ValueError(
+                f"formulas[{index}] failed verification on the base graph"
+            )
 
     total = 0.0
     for _ in range(config.n_chains):
@@ -138,7 +146,9 @@ def _estimate(config: DistanceConfig) -> DistanceResult:
         order = rng.sample(edges, len(edges))
         total += _chain_distance(config, order, valid)
     distance = total / config.n_chains
-    call_budget = 2 + 2 * config.n_chains * edge_count.bit_length()
+    call_budget = len(config.formulas) * (
+        1 + config.n_chains * edge_count.bit_length()
+    )
     verifier_bound = min(1.0, call_budget * config.target_bound)
     return DistanceResult(
         distance=distance,
@@ -153,6 +163,8 @@ def _estimate(config: DistanceConfig) -> DistanceResult:
         sampling_failure_probability=config.delta,
         verifier_failure_bound=verifier_bound,
         total_failure_bound=min(1.0, config.delta + verifier_bound),
+        n_formulas=len(config.formulas),
+        n_pairs=config.n_pairs,
         sampling_mode=(
             "uniform_topological_orders"
             if sampled_orders
@@ -171,7 +183,10 @@ def estimate_distance(config: DistanceConfig) -> DistanceResult:
     """Sample IID chains, binary-search validity boundaries, average distances.
 
     The interval targets expected chain Jaccard distance, not Jaccard over
-    uniformly sampled graphs. Both formulas must pass on the base graph.
+    uniformly sampled graphs. For more than two formulas, it targets the
+    mean over all distinct pairs. Every formula must pass on the base graph.
+    The Hoeffding bound applies to the aggregate score, not each pair.
+    Per chain, each formula's boundary is found once and shared by all pairs.
     The failure bound combines Hoeffding sampling error with a union bound
     on HiProF false acceptances, within its linear-Gaussian model family.
 

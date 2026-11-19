@@ -3,16 +3,16 @@
 Select `CONFIG` at the bottom of `configs.py`, then run from the repository root:
 
 ```bash
-.venv/bin/python -m hiprof_profiling
+.venv/bin/python -m experiments.hiprof_profiling
 ```
 
 With the virtual environment activated, directory execution also works:
 
 ```bash
-# From src/
+# From experiments/
 python hiprof_profiling/
 
-# From src/hiprof_profiling/
+# From experiments/hiprof_profiling/
 python .
 ```
 
@@ -31,8 +31,8 @@ general identification proof. Malformed inputs raise HiProF's exception.
 You can also pass a config directly:
 
 ```python
-from hiprof_profiling import Config
-from hiprof_profiling.main import main
+from experiments.hiprof_profiling import Config
+from experiments.hiprof_profiling.main import main
 
 main(Config(
     graph="X -> Y",
@@ -74,7 +74,7 @@ CONFIG = replace(MEDIATION_05_NESTED_CONDITIONAL_DIVISIONS, n=100)
 
 The shared graph/formula settings live in
 `formula_search.verification.VerificationConfig`. The profiling `Config` in
-`config.py` extends it with `n`; existing imports still work. The timing loop
+`config.py` extends it with `n`; import it from `experiments.hiprof_profiling`. The timing loop
 is in `main.py`. Both module and directory execution use the same selected preset.
 
 ## Run the whole fleet
@@ -82,10 +82,10 @@ is in `main.py`. Both module and directory execution use the same selected prese
 From the repository root:
 
 ```bash
-.venv/bin/python -m hiprof_profiling.fleet
+.venv/bin/python -m experiments.hiprof_profiling.fleet
 ```
 
-Or, with the virtual environment activated, from `src/hiprof_profiling/`:
+Or, with the virtual environment activated, from `experiments/hiprof_profiling/`:
 
 ```bash
 python fleet.py

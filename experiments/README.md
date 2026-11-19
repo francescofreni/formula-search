@@ -1,5 +1,14 @@
 # Experiments
 
+Profiling harnesses and their configs live here, alongside all Slurm files:
+
+- [HiProF profiling](hiprof_profiling/README.md): verification timings.
+- [Distance profiling](distance_metric_profiling/README.md): repeated distance estimates.
+- [Runtime histograms](distance_metric_profiling/RUNTIME.md): 30 trials each for 2 and 5 formulas.
+
+Keep experimental runners, benchmark configs, generated results, and Slurm
+scripts under `experiments/`. Keep reusable library code under `src/`.
+
 Use one runner for a single experiment or a comparison. Each invocation
 creates a new named result folder; earlier results stay in place.
 Run commands from the repository root using the installed `.venv`.

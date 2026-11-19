@@ -9,8 +9,10 @@ from .config import DistanceConfig
 ADJUSTMENT_01_A_VS_B = DistanceConfig(
     graph="A -> B; B -> X; A -> Y; X -> Y",
     target="p(Y | do(X))",
-    formula="sum_{A} { p(A) p(Y | A, X) }",
-    other_formula="sum_{B} { p(B) p(Y | B, X) }",
+    formulas=(
+        "sum_{A} { p(A) p(Y | A, X) }",
+        "sum_{B} { p(B) p(Y | B, X) }",
+    ),
     optional_edges=("A -> X", "B -> Y"),
     epsilon=0.05,
     delta=0.01,
@@ -27,5 +29,14 @@ ADJUSTMENT_02_SHARED_CONFOUNDING = replace(
 # Normal experiment: derive all optional edges from sampled variable orders.
 # The two preceding presets are fixed-family, known-distance controls.
 ADJUSTMENT_03_AUTOMATIC = replace(ADJUSTMENT_01_A_VS_B, optional_edges=None)
+
+# Three valid adjustment formulas on the same base graph.
+ADJUSTMENT_04_THREE_FORMULAS = replace(
+    ADJUSTMENT_03_AUTOMATIC,
+    formulas=(
+        *ADJUSTMENT_03_AUTOMATIC.formulas,
+        "sum_{A, B} { p(A, B) p(Y | A, B, X) }",
+    ),
+)
 
 CONFIG = ADJUSTMENT_03_AUTOMATIC

@@ -8,8 +8,8 @@ from dataclasses import replace
 
 from distance_metric import DistanceConfig
 from distance_metric import configs as examples
+from experiments.hiprof_profiling import configs as formulas
 from formula_search.verification import VerificationConfig
-from hiprof_profiling import configs as formulas
 
 from .config import Config
 
@@ -24,8 +24,7 @@ def _pair(
         distance=DistanceConfig(
             graph=first.graph,
             target=first.target,
-            formula=first.formula,
-            other_formula=second.formula,
+            formulas=(first.formula, second.formula),
             seed=first.seed,
             target_bound=first.target_bound,
         )
@@ -37,7 +36,7 @@ def _pair(
 ADJUSTMENT_01_IDENTICAL = Config(
     distance=replace(
         examples.ADJUSTMENT_03_AUTOMATIC,
-        other_formula=examples.ADJUSTMENT_01_A_VS_B.formula,
+        formulas=(examples.ADJUSTMENT_01_A_VS_B.formulas[0],) * 2,
     ),
     expected_distance=0.0,
 )
@@ -54,6 +53,11 @@ ADJUSTMENT_03_ONE_THIRD = Config(
 
 ADJUSTMENT_04_EIGHT_EDGES = Config(
     distance=examples.ADJUSTMENT_03_AUTOMATIC,
+)
+
+
+ADJUSTMENT_05_THREE_FORMULAS = Config(
+    distance=examples.ADJUSTMENT_04_THREE_FORMULAS,
 )
 
 

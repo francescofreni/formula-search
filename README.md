@@ -12,6 +12,9 @@ written in the grammar of, and checked with,
 Run individual searches or cross-strategy comparisons with the shared
 [experiment runner](experiments/README.md). Each run saves its settings,
 source snapshot, equations, and a readable comparison table in a fresh folder.
+Profiling harnesses and all Slurm scripts belong under `experiments/`; see
+[HiProF profiling](experiments/hiprof_profiling/README.md) and
+[distance profiling](experiments/distance_metric_profiling/README.md).
 
 ## ⚙️ Installation
 

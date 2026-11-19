@@ -8,6 +8,10 @@ from .estimator import DistanceResult
 
 
 def print_sampling_config(config: DistanceConfig) -> None:
+    print(
+        f"Score: mean distance over {config.n_pairs} pairs "
+        f"from {len(config.formulas)} formula entries."
+    )
     if config.optional_edges is None and config.topological_order is None:
         print(
             "Sampling: uniform random permutations of all variables; reject "

@@ -1,13 +1,21 @@
 # Distance-metric profiling
 
+For the **30-trials-per-case Slurm experiment**, see [RUNTIME.md](RUNTIME.md):
+
+```bash
+.venv/bin/python experiments/distance_metric_profiling/profile.py submit
+```
+
+The commands below run the editable profiling presets locally.
+
 Select `CONFIG` at the bottom of `configs.py`. Run from the repository root:
 
 ```bash
-.venv/bin/python -m distance_metric_profiling
-.venv/bin/python -m distance_metric_profiling.fleet
+.venv/bin/python -m experiments.distance_metric_profiling
+.venv/bin/python -m experiments.distance_metric_profiling.fleet
 ```
 
-With the virtual environment activated, from `src/distance_metric_profiling/`:
+With the virtual environment activated, from `experiments/distance_metric_profiling/`:
 
 ```bash
 python .         # Selected config
@@ -49,6 +57,7 @@ also changes the distance being measured, not just its computation cost.
 | `ADJUSTMENT_02_HALF` | 2 | 1/2 |
 | `ADJUSTMENT_03_ONE_THIRD` | 3 | 1/3 |
 | `ADJUSTMENT_04_EIGHT_EDGES` | 8 | Not established |
+| `ADJUSTMENT_05_THREE_FORMULAS` | 8 | Not established |
 | `MEDIATION_01_ADJUSTMENT_VS_FACTORIZATION` | 8 | Not established |
 | `MEDIATION_02_ADJUSTMENT_VS_NESTED_DIVISIONS` | 8 | Not established |
 | `FRONT_DOOR_01_IDENTICAL` | 3 | 0 |
@@ -58,7 +67,7 @@ The mediation, front-door, and napkin formulas reuse the actual search
 outputs in [hiprof_profiling/configs.py](../hiprof_profiling/configs.py).
 Their provenance is recorded in [SOURCES.md](../hiprof_profiling/SOURCES.md).
 The adjustment cases reuse the known-distance examples in
-[distance_metric/configs.py](../distance_metric/configs.py).
+[distance_metric/configs.py](../../src/distance_metric/configs.py).
 
 ## Output and interpretation
 
@@ -80,7 +89,7 @@ All guarantees are for HiProF's linear-Gaussian model family. Delta 0.01 is
 per estimate, separately from verifier error; it is not a simultaneous 99%
 guarantee for the whole fleet. The arithmetic mean of repeat estimates is a
 descriptive summary; this script does not assign it a new confidence bound.
-See [the estimator README](../distance_metric/README.md) for exact semantics.
+See [the estimator README](../../src/distance_metric/README.md) for exact semantics.
 
 The default `ADJUSTMENT_04_EIGHT_EDGES` and all other presets except the
 known-distance `ADJUSTMENT_02_HALF` and `ADJUSTMENT_03_ONE_THIRD` controls
@@ -94,5 +103,15 @@ Set the nested distance config's `include_bidirected=False` for directed
 additions only. Do not supply `optional_edges` or `topological_order` for
 the normal automatic experiment. Explicit edge lists or an explicit order
 select a different, fixed-family distribution and are labeled in the logs.
-See [edge generation](../distance_metric/README.md#automatic-optional-edges)
+See [edge generation](../../src/distance_metric/README.md#automatic-optional-edges)
 for the precise distribution and the cost of rejection sampling.
+
+## Formula groups
+
+Set `distance.formulas=(first, second, third, ...)` to profile a group.
+Every config requires at least two entries. Two entries recover the usual
+pair distance; larger groups return the average over all distinct pairs.
+`ADJUSTMENT_05_THREE_FORMULAS` profiles a three-formula group. All other
+presets contain two formulas. Logs show formula and pair counts.
+The default 1,060 chains and epsilon guarantee apply to the group average;
+verifier calls and their separate error budget increase with formula count.

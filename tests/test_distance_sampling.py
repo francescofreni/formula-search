@@ -79,7 +79,7 @@ def test_estimate_matches_exact_joint_distribution(monkeypatch, capsys):
 
     def truth(graph, formula):
         edges = ADMG.parse(graph).directed
-        breaking = ("B", "X") if formula == config.formula else ("X", "A")
+        breaking = ("B", "X") if formula == config.formulas[0] else ("X", "A")
         return breaking not in edges
 
     exact_distances = []
@@ -94,7 +94,7 @@ def test_estimate_matches_exact_joint_distribution(monkeypatch, capsys):
             ]
             left, right = [
                 {i for i, graph in enumerate(graphs) if truth(graph, formula)}
-                for formula in (config.formula, config.other_formula)
+                for formula in config.formulas
             ]
             exact_distances.append(len(left ^ right) / len(left | right))
     exact = sum(exact_distances) / len(exact_distances)
@@ -147,8 +147,7 @@ def test_real_verifier_automatic_orders_and_no_global_rng_changes():
     config = replace(
         EXAMPLE,
         graph="Z -> X; Z -> Y",
-        formula="p(Y)",
-        other_formula="sum_{Z} { p(Z) p(Y | X, Z) }",
+        formulas=("p(Y)", "sum_{Z} { p(Z) p(Y | X, Z) }"),
         optional_edges=None,
         epsilon=0.4,
     )

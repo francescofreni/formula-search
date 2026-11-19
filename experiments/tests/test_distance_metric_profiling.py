@@ -5,8 +5,10 @@ from dataclasses import replace
 import pytest
 
 from distance_metric import DistanceResult
-from distance_metric_profiling import Config, configs, fleet
-from distance_metric_profiling import main as runner
+from experiments.distance_metric_profiling import Config, configs, fleet
+from experiments.distance_metric_profiling import main as runner
+from experiments.hiprof_profiling import Config as ProfilingConfig
+from formula_search.verification import VerificationConfig
 
 
 @pytest.mark.parametrize("n", [0, -1, 1.5, True])
@@ -66,7 +68,7 @@ def test_fleet_runs_each_named_preset_once(monkeypatch):
         for name, config in vars(configs).items()
         if name != "CONFIG" and isinstance(config, Config)
     ]
-    assert len(expected) == 8
+    assert len(expected) == 9
     assert seen == expected
     assert all(config.n == 5 for config in seen)
     assert all(config.distance.epsilon == 0.05 for config in seen)
@@ -90,3 +92,12 @@ def test_errors_are_not_silently_dropped(monkeypatch, capsys):
     with pytest.raises(ValueError, match="invalid starting formula"):
         runner.main(configs.CONFIG)
     assert "Mean time:" not in capsys.readouterr().out
+
+
+def test_hiprof_config_preserves_shared_settings_and_positional_n():
+    distance = configs.CONFIG.distance
+    profile = ProfilingConfig(
+        distance.graph, distance.formulas[0], distance.target, 3
+    )
+    assert isinstance(profile, VerificationConfig)
+    assert profile.n == 3

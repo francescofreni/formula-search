@@ -13,17 +13,13 @@ from distance_metric import estimator as module
 from distance_metric.configs import ADJUSTMENT_01_A_VS_B as EXAMPLE
 from distance_metric.configs import ADJUSTMENT_02_SHARED_CONFOUNDING
 from formula_search.graph import ADMG
-from formula_search.verification import VerificationConfig
-from hiprof_profiling import Config as ProfilingConfig
+from formula_search.verification import (
+    VerificationSettings,
+)
 
 
 def test_shared_config_and_sampling_budget():
-    assert isinstance(EXAMPLE, VerificationConfig)
-    profile = ProfilingConfig(
-        EXAMPLE.graph, EXAMPLE.formula, EXAMPLE.target, 3
-    )
-    assert isinstance(profile, VerificationConfig)
-    assert profile.n == 3
+    assert isinstance(EXAMPLE, VerificationSettings)
     assert EXAMPLE.n_chains == 1060
     assert EXAMPLE.epsilon == 0.05
     n = EXAMPLE.n_chains
@@ -56,7 +52,7 @@ def test_binary_search_every_possible_boundary(m):
         {"target_bound": 0},
         {"target_bound": float("nan")},
         {"seed": 0.5},
-        {"other_formula": ""},
+        {"formulas": ("p(Y)", "")},
         {"optional_edges": "A -> X"},
     ],
 )
@@ -94,7 +90,9 @@ def test_optional_edges_must_coexist_without_cycles():
 
 def test_candidate_must_be_observational():
     with pytest.raises(ValueError, match="observational"):
-        module._validate_family(replace(EXAMPLE, formula=EXAMPLE.target))
+        module._validate_family(
+            replace(EXAMPLE, formulas=(EXAMPLE.target, EXAMPLE.formulas[1]))
+        )
 
 
 def test_bidirected_optional_edges_are_supported():
@@ -122,15 +120,17 @@ def test_real_hiprof_known_half_distance():
 
 def test_real_hiprof_self_distance():
     result = estimate_distance(
-        replace(EXAMPLE, other_formula=EXAMPLE.formula, epsilon=0.4)
+        replace(EXAMPLE, formulas=(EXAMPLE.formulas[0],) * 2, epsilon=0.4)
     )
     assert result.distance == 0
     assert result.interval == pytest.approx((0, 0.4))
 
 
 def test_real_hiprof_rejects_invalid_start():
-    with pytest.raises(ValueError, match="other_formula failed"):
-        estimate_distance(replace(EXAMPLE, other_formula="p(Y | X)"))
+    with pytest.raises(ValueError, match=r"formulas\[1\] failed"):
+        estimate_distance(
+            replace(EXAMPLE, formulas=(EXAMPLE.formulas[0], "p(Y | X)"))
+        )
 
 
 def test_empty_edge_family():
@@ -149,7 +149,7 @@ def test_sampled_distance_matches_enumeration_and_is_reproducible(monkeypatch):
         directed = ADMG.parse(graph).directed
         a = ("A", "X") in directed
         b = ("B", "Y") in directed
-        return not a if formula == config.formula else not (a and b)
+        return not a if formula == config.formulas[0] else not (a and b)
 
     def factory(graph):
         def check(target, formula, target_bound):
@@ -166,12 +166,14 @@ def test_sampled_distance_matches_enumeration_and_is_reproducible(monkeypatch):
     for order in itertools.permutations(config.optional_edges):
         graphs = ["; ".join((config.graph, *order[:k])) for k in range(4)]
         left = {
-            i for i, graph in enumerate(graphs) if truth(graph, config.formula)
+            i
+            for i, graph in enumerate(graphs)
+            if truth(graph, config.formulas[0])
         }
         right = {
             i
             for i, graph in enumerate(graphs)
-            if truth(graph, config.other_formula)
+            if truth(graph, config.formulas[1])
         }
         exact_distances.append(len(left ^ right) / len(left | right))
     assert len(set(exact_distances)) > 1
@@ -188,9 +190,7 @@ def test_sampled_distance_matches_enumeration_and_is_reproducible(monkeypatch):
     assert again.distance == result.distance
     assert calls == first_calls
     swapped = estimate_distance(
-        replace(
-            config, formula=config.other_formula, other_formula=config.formula
-        )
+        replace(config, formulas=tuple(reversed(config.formulas)))
     )
     assert swapped.distance == result.distance
 
@@ -211,7 +211,7 @@ def test_all_valid_prefixes_and_clipped_upper_interval(monkeypatch):
     def factory(graph):
         def check(target, formula, target_bound):
             # First formula works only at the original graph; second always works.
-            return formula == EXAMPLE.other_formula or graph == EXAMPLE.graph
+            return formula == EXAMPLE.formulas[1] or graph == EXAMPLE.graph
 
         return SimpleNamespace(check=check)
 
@@ -239,7 +239,7 @@ def test_shared_confounding_exact_six_chains():
                         target_bound=config.target_bound,
                     )
                 }
-                for formula in (config.formula, config.other_formula)
+                for formula in config.formulas
             ]
             left, right = valid_sets
             distances.append(len(left ^ right) / len(left | right))

@@ -16,6 +16,7 @@ variable order. This graph happens to have only one valid order, but the
 sampler still uses the same rejection procedure on every chain.
 
 Two explicit-family controls remain available:
+
 - `ADJUSTMENT_01_A_VS_B`: only `A -> X` and `B -> Y`; exact distance **1/2**.
 - `ADJUSTMENT_02_SHARED_CONFOUNDING`: those two edges plus `X <-> Y`;
   exact distance **1/3**. Two of the six edge orders break both formulas
@@ -26,12 +27,17 @@ new automatic experiment. Select a preset at the bottom of `configs.py`.
 
 ## Config and layout
 
-`formula_search.verification.VerificationConfig` holds the shared graph,
-formula, target, seed, and per-check verifier tolerance. Profiling extends
-it with `n`; `DistanceConfig` extends it with `other_formula`,
-`optional_edges`, `epsilon`, and `delta`. Existing profiling config imports
-and named presets continue to work. Profiling repeat count is unrelated to
-the number of chains.
+`formula_search.verification.VerificationSettings` shares graph, seed,
+and per-check verifier tolerance. Single-equation HiProF profiling uses
+`VerificationConfig`, adding `formula` and `target`; its API is unchanged.
+`DistanceConfig` instead adds a target and a `formulas` collection, along
+with the edge-generation and sampling settings.
+
+**Config migration:** replace `formula=a, other_formula=b` with
+`formulas=(a, b)`. Supply a tuple or list of **at least two** nonempty formula
+strings; fewer entries raise `ValueError`. Lists are copied to immutable
+tuples. Entries are not deduplicated: repeated formulas remain repeated
+submissions and their pairwise distance is zero when verdicts are exact.
 
 ```python
 from distance_metric import DistanceConfig, estimate_distance
@@ -39,8 +45,11 @@ from distance_metric import DistanceConfig, estimate_distance
 config = DistanceConfig(
     graph="A -> B; B -> X; A -> Y; X -> Y",
     target="p(Y | do(X))",
-    formula="sum_{A} { p(A) p(Y | A, X) }",
-    other_formula="sum_{B} { p(B) p(Y | B, X) }",
+    formulas=(
+        "sum_{A} { p(A) p(Y | A, X) }",
+        "sum_{B} { p(B) p(Y | B, X) }",
+        "sum_{A, B} { p(A, B) p(Y | A, B, X) }",
+    ),
     epsilon=0.05,
     delta=0.01,
     seed=0,
@@ -49,6 +58,9 @@ config = DistanceConfig(
 result = estimate_distance(config)
 print(result.distance, result.interval, result.elapsed_seconds)
 ```
+
+`ADJUSTMENT_04_THREE_FORMULAS` is the ready-to-run three-formula preset.
+The result and logs include the number of formulas and distinct index pairs.
 
 `main.py` only runs and reports. `edges.py` resolves and validates the
 edge family; `estimator.py` handles binary search and sampling. No files, archived results, or network requests
@@ -110,14 +122,29 @@ Use `m + 1` if it stays valid throughout. Because the starting graph is
 valid, `k` is also the number of valid positions. The chain distance is
 
 ```text
-abs(k_formula - k_other_formula) / max(k_formula, k_other_formula)
+d_ij = abs(k_i - k_j) / max(k_i, k_j)
 ```
 
-This is Jaccard distance between the two valid prefixes. We average it over
-sampled chains. The target is **expected chain Jaccard distance**, not a
-ratio of pooled counts and not Jaccard distance over uniformly chosen graphs.
-The graph, target, edge-generation settings, and sampling distribution must
-be fixed when comparing distances.
+This is Jaccard distance between two valid prefixes. For `q` formulas,
+compute each boundary **once per chain**, then score that chain by
+
+```text
+chain_score = sum(d_ij for i < j) / (q * (q - 1) / 2)
+```
+
+The reported distance averages `chain_score` over all sampled chains.
+Equivalently it estimates the average expected distance over all formula
+pairs. For **two formulas**, there is one pair and this recovers the usual
+metric. Reordering the formulas leaves the mathematical score unchanged.
+Verification is linear in `q` per chain; pairwise arithmetic is quadratic.
+
+The target is expected chain Jaccard diversity, not a ratio of pooled
+counts or Jaccard distance over uniformly chosen graphs. It measures the
+collection's diversity, not its number of discoveries or novelty relative
+to an external archive. Fix the formula collection before evaluation;
+feedback-driven selection requires fresh evaluation chains. The graph,
+target, edge-generation settings, and sampling distribution must be fixed
+when comparing scores.
 
 ## Error bounds
 
@@ -130,15 +157,19 @@ N = ceil(log(2 / delta) / (2 * epsilon**2))
 Defaults `epsilon=0.05`, `delta=0.01` give **1,060 chains**. With exact
 validity answers, Hoeffding gives probability at most 0.01 that the estimate
 is off by 0.05 or more. The reported interval is clipped to [0, 1].
+Each chain's group score lies in [0, 1], so the same bound and 1,060-chain
+budget apply regardless of formula count. This is a guarantee on the
+**aggregate score**, not a simultaneous guarantee on every pair.
 
 HiProF answers are probabilistic. We separately bound any false acceptance
 by `Q_max * target_bound`, clipped at 1, where
 
 ```text
-Q_max = 2 + 2 * N * ceil(log2(m + 1))
+Q_max = q * (1 + N * ceil(log2(m + 1)))
 ```
 
-The two extra calls check both formulas on the base graph. We use this fixed
+Here `q` is the formula count; the first `q` calls check all formulas on
+the base graph. For `q=2` this is the previous budget. We use this fixed
 worst-case budget, not the random realized call count, for the union bound.
 The combined failure bound is at most `delta + Q_max * target_bound`,
 clipped at 1. Thus the default combined bound is slightly above 1%, not
@@ -152,10 +183,10 @@ existing observed variables. Both directed and bidirected additions are
 supported. All additions together must remain acyclic in their directed
 part, ensuring every order is valid. Cyclic orders are rejected by rejecting
 the whole family, rather than resampling and changing the distribution.
-Both observational formulas must pass on the starting graph; otherwise the
+All observational formulas must pass on the starting graph; otherwise the
 estimator raises an error. This ensures the Jaccard denominator is nonzero.
 
-There is no verdict cache beyond the two base-graph checks. Every queried
+There is no verdict cache beyond the base-graph checks. Every queried
 position creates a fresh HiProF verifier. Total time includes validation,
 sampling, graph construction, and verification, but excludes imports and
 printing. The result reports both actual and worst-case verifier calls.

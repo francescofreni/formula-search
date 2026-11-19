@@ -3,12 +3,13 @@
 from dataclasses import dataclass
 from math import ceil, isfinite, log
 
-from formula_search.verification import VerificationConfig
+from formula_search.verification import VerificationSettings
 
 
 @dataclass(frozen=True)
-class DistanceConfig(VerificationConfig):
-    other_formula: str
+class DistanceConfig(VerificationSettings):
+    target: str
+    formulas: tuple[str, ...] | list[str]
     optional_edges: tuple[str, ...] | None = None
     epsilon: float = 0.05
     delta: float = 0.01
@@ -17,11 +18,15 @@ class DistanceConfig(VerificationConfig):
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if (
-            not isinstance(self.other_formula, str)
-            or not self.other_formula.strip()
-        ):
-            raise ValueError("other_formula must be a nonempty string")
+        if not isinstance(self.target, str) or not self.target.strip():
+            raise ValueError("target must be a nonempty string")
+        if not isinstance(self.formulas, (tuple, list)):
+            raise ValueError("formulas must be a tuple or list of strings")
+        if len(self.formulas) < 2:
+            raise ValueError("At least two formulas are required")
+        if not all(isinstance(f, str) and f.strip() for f in self.formulas):
+            raise ValueError("Each formula must be a nonempty string")
+        object.__setattr__(self, "formulas", tuple(self.formulas))
         if self.optional_edges is not None and (
             not isinstance(self.optional_edges, tuple)
             or not all(
@@ -52,3 +57,8 @@ class DistanceConfig(VerificationConfig):
     def n_chains(self) -> int:
         """P(|estimate - true mean chain distance| >= epsilon) <= delta."""
         return ceil(log(2 / self.delta) / (2 * self.epsilon**2))
+
+    @property
+    def n_pairs(self) -> int:
+        """Number of distinct index pairs, without deduplicating entries."""
+        return len(self.formulas) * (len(self.formulas) - 1) // 2

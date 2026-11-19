@@ -12,9 +12,8 @@ from formula_search.graph import ADMG
 def test_automatic_default_and_directed_only():
     config = DistanceConfig(
         graph=EXAMPLE.graph,
-        formula=EXAMPLE.formula,
         target=EXAMPLE.target,
-        other_formula=EXAMPLE.other_formula,
+        formulas=EXAMPLE.formulas,
     )
     assert config.optional_edges is None
     config = replace(config, topological_order=("A", "B", "X", "Y"))

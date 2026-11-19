@@ -6,10 +6,10 @@ from pathlib import Path
 
 def main() -> None:
     if not __package__:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-    from distance_metric_profiling import Config, configs
-    from distance_metric_profiling.main import main as profile
+    from experiments.distance_metric_profiling import Config, configs
+    from experiments.distance_metric_profiling.main import main as profile
 
     presets = [
         (name, config)
