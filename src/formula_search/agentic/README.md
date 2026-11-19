@@ -77,7 +77,11 @@ calls, retries, expansions, and discoveries alongside these limits.
   equation rendering, and structural state identity.
 - `depth_first.py`: stack traversal and automatic backtracking.
 - `beam.py`: frontier expansion, layer deduplication, selection and discard.
-- `fireworks.py`: HTTP transport and decision schemas for either strategy.
+- `model.py`: provider-independent `Model.complete()` contract and response errors.
+- `chat_completions.py`: shared HTTP transport, credentials, retries, and response validation.
+- `fireworks.py`, `openrouter.py`: provider endpoints and payload differences.
+- `selection.py`: `DecisionModel`, which adds search decision schemas to any model.
+- `providers.py`: explicit provider selection for configuration and CLI use.
 - `decisions.py`: validates choices before applying them, bounded corrective
   retries, and automatic forced selections; shared by Python, CLI, and experiments.
 - `prompting.py`: lossless grouping of beam options by parent history.
@@ -86,6 +90,92 @@ calls, retries, expansions, and discoveries alongside these limits.
 
 The sections below describe the original depth-first interface unless they
 explicitly mention beam search.
+
+## Shared model interface
+
+Use `complete(prompt)` to send arbitrary text and receive a response string:
+
+```python
+from formula_search.agentic import Model, Fireworks, OpenRouter, create_model
+
+model: Model = OpenRouter("YOUR_OPENROUTER_MODEL_ID")
+print(model.complete("Say hello in one sentence."))
+
+# Same interface, different provider:
+model = Fireworks("YOUR_FIREWORKS_MODEL_ID")
+print(model.complete("Say hello in one sentence."))
+
+# When provider/model come from configuration:
+model = create_model("openrouter", "YOUR_OPENROUTER_MODEL_ID")
+```
+
+`Model` is a Python protocol: an implementation needs a
+`complete(prompt: str, *, response_format=None) -> str` method, without
+inheriting a particular HTTP client. `response_format` is optional for plain
+text; a requested format must be supported or rejected explicitly. Clients
+return complete, nonempty text or raise an error. There is no implicit chat
+history: the caller supplies the context in each prompt.
+
+For search, wrap the model with `DecisionModel`:
+
+```python
+from formula_search.agentic import BeamSession, DecisionModel, OpenRouter
+from formula_search.evaluator import Task
+
+session = BeamSession(Task("Z -> X; X -> Y", "X", "Y"), beam_width=3)
+model = OpenRouter("YOUR_OPENROUTER_MODEL_ID")
+archive = session.run(DecisionModel(model), max_steps=20)
+```
+
+`DecisionModel` builds the same move/beam schema for either provider.
+The session still validates selections and replays proofs locally. Existing
+`session.run(Fireworks(...))` calls remain supported: calling a provider
+object directly is a compatibility shorthand for `DecisionModel(model)`.
+Use `.complete(...)` for ordinary text prompts.
+
+Both built-in clients accept `api_key`, `timeout`, `max_retries`, `on_retry`,
+`max_tokens`, and `reasoning_effort`. They share the existing retry behavior.
+The token cap remains unset by default. Construction makes no API request.
+
+| Provider | Model environment variable | Key environment variable | Key file fallback |
+| --- | --- | --- | --- |
+| Fireworks | `FIREWORKS_MODEL` | `FIREWORKS_API_KEY` | `~/.config/fireworksai/api_key` |
+| OpenRouter | `OPENROUTER_MODEL` | `OPENROUTER_API_KEY` | `~/.config/openrouter/api_key` |
+
+Explicit constructor arguments take precedence over environment variables;
+key files are used when no argument/environment key is available. Provider
+selection is explicit and never inferred from the model ID.
+
+Both CLI entry points accept `--provider fireworks|openrouter`; Fireworks
+remains the default:
+
+```bash
+.venv/bin/python -m formula_search.agentic.smoke_test \
+  --provider openrouter --model YOUR_OPENROUTER_MODEL_ID "Say hello."
+
+.venv/bin/python -m formula_search.agentic \
+  --provider openrouter --model YOUR_OPENROUTER_MODEL_ID \
+  --strategy beam --beam-width 3 --max-steps 20
+```
+
+OpenRouter uses `https://openrouter.ai/api/v1/chat/completions`. Search
+requests set `strict: true` and `provider.require_parameters: true`; choose
+an endpoint that supports the requested schema. Unsupported schema features
+can produce an API error; the client does not silently remove constraints.
+OpenRouter receives reasoning effort as `reasoning.effort`; Fireworks keeps
+its existing `reasoning_effort` field. See OpenRouter's
+[structured output documentation](https://openrouter.ai/docs/guides/features/structured-outputs)
+and [reasoning controls](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
+
+To add another provider, implement `Model` directly, or subclass
+`ChatCompletionsModel` for a compatible HTTP API. That shared base needs
+provider name, endpoint, model/key environment names, and key directory;
+override `_configure_payload` for provider-specific fields. Add it to
+`PROVIDERS` if it should be available by CLI name. Search logic and schemas
+need no provider-specific changes.
+
+The experiment runner's existing definitions still use Fireworks; the
+provider switch above is available through Python and the agentic CLI.
 
 ## Fireworks
 
@@ -135,7 +225,7 @@ and execution are deterministic for the same decisions. Unrecoverable
 errors raise exceptions, with no fallback branch selection. Invalid
 decisions leave the frontier unchanged.
 Model calls send the graph, target, active branch path, current equation,
-legal next equations, recorded costs, and known formulas to Fireworks; keys are only used in the authorization header.
+legal next equations, recorded costs, and known formulas to the selected provider; keys are only used in the authorization header.
 
 ## Offline or another provider
 
@@ -307,7 +397,7 @@ unpruned comparison. State memory, like the frontier, lasts for the Session.
 
 ### Temporary API failures
 
-Fireworks requests default to a 300-second timeout and five retries (six attempts
+Both provider clients default to a 300-second timeout and five retries (six attempts
 maximum). Timeouts, connection failures, HTTP 408/429 and HTTP 5xx are retried
 with exponential backoff (2 seconds doubling to 60 seconds), independent jitter,
 and any longer Retry-After delay. Other HTTP errors fail immediately. Invalid selections and length-truncated

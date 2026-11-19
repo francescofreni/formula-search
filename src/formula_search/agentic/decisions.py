@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .fireworks import IncompleteResponse
+from .model import IncompleteResponse
 
 if TYPE_CHECKING:
     from .common import SearchSession

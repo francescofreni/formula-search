@@ -2,7 +2,7 @@
 
 import io
 import json
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -140,7 +140,7 @@ def test_fireworks_request_and_schema(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     }
     with patch(
-        "formula_search.agentic.fireworks.urlopen",
+        "formula_search.agentic.chat_completions.urlopen",
         return_value=io.BytesIO(json.dumps(data).encode()),
     ) as send:
         assert Fireworks()(prompt) == '{"move":0}'
@@ -167,7 +167,8 @@ def test_fireworks_loads_requested_key_file(
     directory.mkdir(parents=True)
     (directory / "api_key").write_text("test-file-secret\n")
     with patch(
-        "formula_search.agentic.fireworks.Path.home", return_value=tmp_path
+        "formula_search.agentic.chat_completions.Path.home",
+        return_value=tmp_path,
     ):
         model = Fireworks("test-model")
     assert model._key == "test-file-secret"
@@ -188,7 +189,7 @@ def test_truncated_model_output_leaves_search_unchanged() -> None:
     }
     with (
         patch(
-            "formula_search.agentic.fireworks.urlopen",
+            "formula_search.agentic.chat_completions.urlopen",
             side_effect=[
                 io.BytesIO(json.dumps(data).encode()) for _ in range(3)
             ],
@@ -211,7 +212,7 @@ def test_fireworks_plain_prompt_has_no_move_schema() -> None:
         ]
     }
     with patch(
-        "formula_search.agentic.fireworks.urlopen",
+        "formula_search.agentic.chat_completions.urlopen",
         return_value=io.BytesIO(json.dumps(data).encode()),
     ) as send:
         assert (
@@ -241,7 +242,7 @@ def test_reasoning_budget_and_length_diagnostics() -> None:
     }
     with (
         patch(
-            "formula_search.agentic.fireworks.urlopen",
+            "formula_search.agentic.chat_completions.urlopen",
             return_value=io.BytesIO(json.dumps(data).encode()),
         ) as send,
         pytest.raises(ValueError) as error,
@@ -277,7 +278,11 @@ def test_cli_prints_partial_results_on_provider_failure(capsys) -> None:
     with (
         patch("sys.argv", ["agentic"]),
         patch(
-            "formula_search.agentic.__main__.Fireworks", return_value=choose
+            "formula_search.agentic.__main__.create_model",
+            return_value=Mock(
+                model="test-model",
+                complete=lambda prompt, **kwargs: choose(prompt),
+            ),
         ),
         pytest.raises(SystemExit) as error,
     ):
@@ -444,7 +449,7 @@ def test_removed_bound_cli_argument_is_rejected() -> None:
 
     with (
         patch("sys.argv", ["agentic", "--bound", "4"]),
-        patch("formula_search.agentic.__main__.Fireworks") as model,
+        patch("formula_search.agentic.__main__.create_model") as model,
         pytest.raises(SystemExit) as error,
     ):
         main()

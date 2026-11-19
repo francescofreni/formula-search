@@ -1,4 +1,4 @@
-"""Run a small Fireworks-guided proof search from the command line.
+"""Run a small LLM-guided proof search from the command line.
 Example usage:
 .venv/bin/python -m formula_search.agentic \
   --model accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b \
@@ -15,9 +15,10 @@ from dataclasses import asdict
 from urllib.error import URLError
 
 from ..evaluator import Task
-from . import BeamSession, DepthFirstSession, Fireworks
+from . import BeamSession, DecisionModel, DepthFirstSession, create_model
 from .common import SearchSession
 from .prompts import PROMPT_VERSION, PROMPT_VERSIONS
+from .providers import PROVIDERS
 
 
 def main() -> None:
@@ -25,8 +26,9 @@ def main() -> None:
     parser.add_argument("--graph", default="Z -> X; X -> Y")
     parser.add_argument("--treatment", default="X")
     parser.add_argument("--outcome", default="Y")
+    parser.add_argument("--provider", choices=PROVIDERS, default="fireworks")
     parser.add_argument(
-        "--model", help="Fireworks model ID; or FIREWORKS_MODEL"
+        "--model", help="Model ID or provider model environment variable"
     )
     parser.add_argument(
         "--strategy", choices=("depth-first", "beam"), default="depth-first"
@@ -69,7 +71,8 @@ def main() -> None:
         )
     else:
         session = DepthFirstSession(task, prompt_version=args.prompt_version)
-    model = Fireworks(
+    model = create_model(
+        args.provider,
         args.model,
         timeout=args.api_timeout,
         max_retries=args.max_retries,
@@ -77,8 +80,10 @@ def main() -> None:
         reasoning_effort=args.reasoning_effort,
     )
 
+    decision = DecisionModel(model)
+
     def choose(prompt: str) -> str:
-        response = model(prompt)
+        response = decision(prompt)
         print(response, flush=True)
         return response
 
@@ -107,6 +112,8 @@ def main() -> None:
         json.dumps(
             {
                 "strategy": args.strategy,
+                "provider": args.provider,
+                "model": model.model,
                 **session.prompt_template.metadata,
                 "beam_width": (
                     session.beam_width

@@ -37,7 +37,15 @@ Slurm state and the saved row count before treating any run as complete.
 
 `config.json` holds exact parameters and formulas; `manifest.json` records
 code hashes/environment; `submission.json` records the command/job ID;
-`slurm/` contains output/error logs; `summary.json` holds final timing stats.
+`slurm/` contains output/error logs. Each trial prints its distance estimate,
+uncertainty interval, runtime, and verifier calls. `timings.csv` includes
+`distance`, and trial JSON files include the full uncertainty information.
+`summary.json` and the final Slurm output report the mean, standard deviation,
+minimum, and maximum of both runtime and distance for each case. These
+repeat statistics are descriptive; they do not provide a new confidence
+interval for the mean. The interval guarantee is per estimate and applies
+to HiProF's linear-Gaussian validity checks, with verifier error accounted
+for separately in each trial JSON.
 
 To prepare without submitting, use `prepare` instead of `submit`.
 `--trials 1` creates a separate smoke-test experiment. To execute a prepared

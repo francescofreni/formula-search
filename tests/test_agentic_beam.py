@@ -2,7 +2,7 @@
 
 import io
 import json
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -191,7 +191,7 @@ def test_fireworks_beam_schema_is_dynamic_and_constrained():
         "choices": [{"finish_reason": "stop", "message": {"content": reply}}]
     }
     with patch(
-        "formula_search.agentic.fireworks.urlopen",
+        "formula_search.agentic.chat_completions.urlopen",
         return_value=io.BytesIO(json.dumps(response).encode()),
     ) as send:
         assert Fireworks("test-model", api_key="secret")(prompt) == reply
@@ -223,7 +223,11 @@ def test_beam_cli_logs_strategy_width_and_history(capsys):
             ],
         ),
         patch(
-            "formula_search.agentic.__main__.Fireworks", return_value=choose
+            "formula_search.agentic.__main__.create_model",
+            return_value=Mock(
+                model="test-model",
+                complete=lambda prompt, **kwargs: choose(prompt),
+            ),
         ),
     ):
         main()

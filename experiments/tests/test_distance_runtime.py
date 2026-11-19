@@ -4,7 +4,9 @@ import csv
 import importlib.util
 import json
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
+from statistics import stdev
 
 import pytest
 
@@ -56,7 +58,7 @@ def local_plan(runner, monkeypatch):
 
 
 def test_thirty_per_case_balanced_order_and_histogram_rows(
-    runner, monkeypatch, tmp_path
+    runner, monkeypatch, tmp_path, capsys
 ):
     root = runner.prepare(30, tmp_path)
     local_plan(runner, monkeypatch)
@@ -67,7 +69,12 @@ def test_thirty_per_case_balanced_order_and_histogram_rows(
         assert config.n_chains == 1060
         assert config.optional_edges is config.topological_order is None
         assert config.include_bidirected
-        return fake_result(config)
+        distance = 0.2 + config.seed / 100
+        return replace(
+            fake_result(config),
+            distance=distance,
+            interval=(distance - 0.05, distance + 0.05),
+        )
 
     monkeypatch.setattr(runner, "estimate_distance", estimate)
     runner.worker(root)
@@ -94,6 +101,17 @@ def test_thirty_per_case_balanced_order_and_histogram_rows(
     status = json.loads((root / "status.json").read_text())
     assert status["status"] == "complete"
     assert status["completed_trials"] == status["expected_trials"] == 60
+    summary = json.loads((root / "summary.json").read_text())
+    for case in summary.values():
+        assert case["mean_distance"] == pytest.approx(0.345)
+        assert case["min_distance"] == pytest.approx(0.2)
+        assert case["max_distance"] == pytest.approx(0.49)
+        assert case["std_distance"] == pytest.approx(
+            stdev(0.2 + seed / 100 for seed in range(30))
+        )
+    output = capsys.readouterr().out
+    assert "distance=0.200000; interval=[0.150000, 0.250000]" in output
+    assert '"mean_distance"' in output
     before = (root / "timings.csv").read_bytes()
     with pytest.raises(FileExistsError):
         runner.worker(root)

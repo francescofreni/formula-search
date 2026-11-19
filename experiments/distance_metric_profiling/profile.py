@@ -139,7 +139,7 @@ def prepare(trials: int, parent: Path) -> Path:
         "- `trials/*.json`: full result and seed for each completed trial.\n"
         "- `config.json`: exact graph, formulas, settings and schedule.\n"
         "- `status.json`: completion/failure and expected trial count.\n"
-        "- `summary.json`: final per-case runtime statistics.\n"
+        "- `summary.json`: final per-case runtime and distance statistics.\n"
         "- `manifest.json`, `source/`: frozen code, HiProF grammar, "
         "package versions and hashes.\n"
         "- `submission.json`, `slurm/`: exact submitted command and logs.\n\n"
@@ -265,9 +265,18 @@ def worker(root: Path) -> None:
                     print(
                         f"DONE {name}: {result.elapsed_seconds:.3f} s; "
                         f"distance={result.distance:.6f}; "
+                        f"interval=[{result.interval[0]:.6f}, "
+                        f"{result.interval[1]:.6f}]; "
                         f"HiProF calls={result.verifier_calls}",
                         flush=True,
                     )
+        print(
+            "Distance intervals use each case's configured epsilon and "
+            "sampling failure probability per estimate, plus the recorded "
+            "HiProF verifier error bound. Validity checks are restricted "
+            "to linear-Gaussian models. Repeat statistics are descriptive.",
+            flush=True,
+        )
         summary = {}
         for name in configs:
             times = [
@@ -275,12 +284,21 @@ def worker(root: Path) -> None:
             ]
             if len(times) != plan["trials_per_case"]:
                 raise ValueError("Incomplete case")
+            distances = [
+                row["distance"] for row in rows if row["case"] == name
+            ]
             summary[name] = {
                 "trials": len(times),
                 "mean_seconds": mean(times),
                 "std_seconds": stdev(times) if len(times) > 1 else None,
                 "min_seconds": min(times),
                 "max_seconds": max(times),
+                "mean_distance": mean(distances),
+                "std_distance": (
+                    stdev(distances) if len(distances) > 1 else None
+                ),
+                "min_distance": min(distances),
+                "max_distance": max(distances),
             }
         write_json(root / "summary.json", summary)
         write_json(
