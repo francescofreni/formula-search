@@ -1,17 +1,15 @@
-"""Config type; named presets and the selected CONFIG live in configs.py."""
+"""Profiling settings extend the shared graph/formula verification config."""
 
 from dataclasses import dataclass
 
+from formula_search.verification import VerificationConfig
+
 
 @dataclass(frozen=True)
-class Config:
-    graph: str
-    formula: str
-    target: str
+class Config(VerificationConfig):
     n: int = 30
-    seed: int = 0
-    target_bound: float = 1e-14
 
     def __post_init__(self) -> None:
+        super().__post_init__()
         if type(self.n) is not int or self.n < 1:
             raise ValueError("n must be a positive integer")

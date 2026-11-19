@@ -6,10 +6,10 @@ from pathlib import Path
 
 def run() -> None:
     if not __package__:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-    from hiprof_profiling.configs import CONFIG
-    from hiprof_profiling.main import main
+    from experiments.hiprof_profiling.configs import CONFIG
+    from experiments.hiprof_profiling.main import main
 
     main(CONFIG)
 

@@ -34,6 +34,7 @@ AGENTS.md
 # Experiment infrastructure is tracked; generated and legacy files stay local.
 /experiments/*
 !/experiments/README.md
+!/experiments/__init__.py
 !/experiments/run.py
 !/experiments/worker.slurm
 !/experiments/_runner/
@@ -43,3 +44,17 @@ AGENTS.md
 # Job output logs
 *.err
 *.out
+
+# Distance runtime experiment code; keep all generated runs ignored.
+!/experiments/distance_metric_profiling/
+/experiments/distance_metric_profiling/*
+!/experiments/distance_metric_profiling/*.py
+!/experiments/distance_metric_profiling/*.slurm
+!/experiments/distance_metric_profiling/*.md
+
+# HiProF profiling harness; generated outputs remain local.
+!/experiments/hiprof_profiling/
+/experiments/hiprof_profiling/*
+!/experiments/hiprof_profiling/*.py
+!/experiments/hiprof_profiling/*.slurm
+!/experiments/hiprof_profiling/*.md

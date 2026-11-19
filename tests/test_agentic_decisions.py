@@ -136,7 +136,7 @@ def test_length_response_gets_feedback_with_unchanged_provider_settings():
     ]
     events = []
     with patch(
-        "formula_search.agentic.fireworks.urlopen",
+        "formula_search.agentic.chat_completions.urlopen",
         side_effect=[io.BytesIO(json.dumps(r).encode()) for r in results],
     ) as send:
         session.run(

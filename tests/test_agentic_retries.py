@@ -10,7 +10,7 @@ import pytest
 
 from formula_search.agentic import Fireworks
 
-MODULE = "formula_search.agentic.fireworks."
+MODULE = "formula_search.agentic.chat_completions."
 
 
 def response():
